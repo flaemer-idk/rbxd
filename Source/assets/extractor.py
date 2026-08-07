@@ -1,6 +1,6 @@
+from typing import Any, Generator
 from urllib3.response import BaseHTTPResponse
-from collections.abc import Generator
-from typing import Any
+from urllib3.response import BaseHTTPResponse
 import subprocess
 import functools
 import urllib3

@@ -79,6 +79,8 @@ class popen_entry(base_entry):
     Routine entry class that corresponds to a Popen subprocess object.
     '''
     debug_x96: bool = False
+    backend: str | None = None
+    proton_path: str | None = None
     popen_mains: list[subprocess.Popen[str]] = (
         dataclasses.field(init=False, default_factory=list, hash=False)
     )
@@ -88,32 +90,67 @@ class popen_entry(base_entry):
     is_terminated: bool = dataclasses.field(init=False, default=False)
     is_running: bool = dataclasses.field(init=False, default=False)
 
+# ПАТЧ: Метод init_popen выровнен по 8 пробелам и находится внутри popen_entry
     def init_popen(self, exe_path: str, cmd_args: tuple[str, ...], *args, **kwargs) -> None:
-        '''
-        Creates new Popen thread(s) and stores them in `popen_mains` and `popen_daemons`.
-        '''
-        if self.is_terminated:
-            raise Exception(
-                'Attempted to open a new EXE on a terminated routine.'
-            )
+        import sys
+        import os
 
-        # Checks if Wine is installed.  Redundant if using Windows.
-        if shutil.which('wine') is not None:
-            params = ('wine', exe_path, *cmd_args)
+        if not self.backend:
+            print("Error: No backend chosen. Please select a backend using --backend {wine,proton}.", file=sys.stderr)
+            sys.exit(1)
+
+        env = (kwargs.get('env') or os.environ).copy()
+
+        no_cage = os.environ.get('RFD_NO_CAGE') == '1'
+        is_server = getattr(self, 'BIN_SUBTYPE', None) == util.resource.bin_subtype.SERVER
+        use_cage = sys.platform.startswith('linux') and is_server and not no_cage
+
+        if self.backend == 'proton':
+            runner = 'umu-run'
+            env['UMU_RUNTIME_UPDATE'] = '0'
+            if self.proton_path:
+                env['PROTONPATH'] = self.proton_path
+            
+            # Полностью удаляем WINEPREFIX для Proton бэкенда, чтобы утилита umu-run 
+            # управляла префиксом самостоятельно без конфликтов с системным окружением.
+            env.pop('WINEPREFIX', None)
+            
+        elif self.backend == 'wine':
+            runner = 'wine'
+            env['WINEDEBUG'] = '-all'
+            
+            # Настраиваем WINEPREFIX исключительно для классического Wine
+            if 'WINEPREFIX' not in env:
+                data_dir = env.get('RFD_DATA_DIR')
+                if data_dir:
+                    env['WINEPREFIX'] = os.path.join(data_dir, 'wine', '.wine-rfd')
+                else:
+                    env['WINEPREFIX'] = os.path.expanduser('~/.wine-rfd')
+                
+            # Полная очистка Proton-переменных для изоляции префикса Wine от конфликтов
+            env.pop('PROTONPATH', None)
+            env.pop('UMU_RUNTIME_UPDATE', None)
+            env.pop('STEAM_COMPAT_CLIENT_INSTALL_PATH', None)
+            env.pop('STEAM_COMPAT_DATA_PATH', None)
         else:
-            params = (exe_path, *cmd_args)
+            print(f"Error: Unknown backend '{self.backend}'.", file=sys.stderr)
+            sys.exit(1)
 
+        if use_cage:
+            params = ('cage', '--', runner, exe_path) + cmd_args
+            env['WLR_BACKENDS'] = 'headless'
+        else:
+            params = (runner, exe_path) + cmd_args
+
+        kwargs['env'] = env
         self.is_running = True
         principal = subprocess.Popen(
-            params, *args, **kwargs, cwd=os.path.dirname(exe_path),
+            params, *args, **kwargs, cwd=os.path.dirname(exe_path)
         )
         self.popen_mains.append(principal)
 
         if self.debug_x96:
-            popen_dbg = subprocess.Popen[str]([
-                'x96dbg',
-                '-p', str(principal.pid),
-            ])
+            popen_dbg = subprocess.Popen[str](['x96dbg', '-p', str(principal.pid)])
             self.popen_daemons.append(popen_dbg)
 
     @override
@@ -295,6 +332,7 @@ class bin_entry(popen_entry, loggable_entry):
         '''
         Updates the FFlags in the game configuration.
         '''
+        # TODO: move FFlag loading to an API endpoint.
         new_flags = {
             **self.logger.rcc_logs.get_level_table(),
         }

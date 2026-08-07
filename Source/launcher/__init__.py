@@ -23,8 +23,8 @@ from .subparsers.args_aux import (
     clear_cache as _,
     download as _,
     debug as _,
+    backend as _,
 )
-
 
 def parse_arg_list(args: list[str] | None) -> list[routines.base_entry] | None:
     '''

@@ -1,5 +1,12 @@
+import os
 import traceback
 import launcher
+
+# Настройки Wine по умолчанию, если они не заданы в системе
+if 'WINEPREFIX' not in os.environ:
+    os.environ['WINEPREFIX'] = '/idkselfhost/Roblox/wine/.wine-rfd'
+if 'WINEDEBUG' not in os.environ:
+    os.environ['WINEDEBUG'] = '-all'
 
 INTERRUPT_MESSAGE = '** RECEIVED Ctrl+C **'
 

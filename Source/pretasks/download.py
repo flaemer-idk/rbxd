@@ -5,6 +5,7 @@ import shutil
 import io
 import os
 import ssl
+import sys  # Добавлен импорт sys для проверки TTY
 
 # Third-party imports
 from vendored import tqdm
@@ -72,7 +73,16 @@ def should_overwrite(full_dir: str) -> bool:
     if version_str.startswith(util.const.ZIPPED_RELEASE_VERSION):
         return False
 
-    return input('Should RFD overwrite the `%s`? (y/N) ' % full_dir).lower().startswith('y')
+    # ПАТЧ: Если запущен в фоновом/неинтерактивном режиме (например, через Popen или Go),
+    # то sys.stdin.isatty() вернет False. В этом случае мы не вызываем input(),
+    # чтобы избежать падения по EOFError, а просто возвращаем False.
+    if not sys.stdin or not sys.stdin.isatty():
+        return False
+
+    try:
+        return input('Should RFD overwrite the `%s`? (y/N) ' % full_dir).lower().startswith('y')
+    except EOFError:
+        return False
 
 
 def bootstrap_binary(

@@ -14,6 +14,7 @@ from . import (
     player_info,
     save_place,
     setup_player,
+    setup_rcc,
     text_filter,
     studio,
     misc,
