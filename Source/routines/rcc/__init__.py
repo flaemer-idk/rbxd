@@ -30,7 +30,7 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
     track_file_changes: bool = True
     rcc_port: int
 
-    # TODO: fix the way place idens work.
+    # TODO: expand place idens to work with multiple at a time.
     place_iden: int = const.PLACE_IDEN_CONST
 
     @override
@@ -125,7 +125,6 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
         Updates FFlags, FInts, et c. in the game configuration based on the Rōblox version.
         Individual fast variables, stored in variable `new_flags`, are what get overwritten to the flile.
         '''
-        # TODO: move FFlag loading to an API endpoint.
         version = self.retr_version()
         new_flags = {
             **self.logger.rcc_logs.get_level_table(),
@@ -231,8 +230,11 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
         Pipes output from the RCC server to the logger module for processing.
         This is done in a separate thread to avoid blocking the main process from terminating RCC when necessary.
         '''
-        stdout: IO[bytes] = self.popen_mains[0].stdout  # pyright: ignore[reportAssignmentType]
-        os.set_blocking(stdout.fileno(), False)
+        stdout: IO[bytes] = self.popen_mains[0].stdout
+        try:
+            os.set_blocking(stdout.fileno(), False)
+        except (AttributeError, OSError, Exception):
+            pass
         assert stdout is not None
         stream_data = bytearray()
         while True:

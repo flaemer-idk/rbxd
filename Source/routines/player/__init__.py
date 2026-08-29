@@ -4,6 +4,8 @@ import urllib.parse
 import dataclasses
 import ipaddress
 import time
+import json
+import os
 
 # Typing imports
 from typing import ClassVar, override
@@ -92,6 +94,31 @@ class obj_type(logic.bin_entry):
         return util.versions.rōblox.from_name(
             str(res.read(), encoding='utf-8'),
         )
+
+    @override
+    def update_fvars(self) -> None:
+        client_flags = {
+            "FFlagDebugGraphicsDisableDirect3D11": "True",
+            "FFlagDebugGraphicsPreferVulkan": "True",
+        }
+
+        client_settings_dir = self.get_versioned_path('ClientSettings')
+        os.makedirs(client_settings_dir, exist_ok=True)
+        path = os.path.join(client_settings_dir, 'ClientAppSettings.json')
+
+        json_data = {}
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    json_data = json.load(f)
+            except Exception:
+                json_data = {}
+
+        json_data.update(client_flags)
+        json_data.update(self.logger.player_logs.get_level_table())
+
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(json_data, f, indent='\t')
 
     @override
     def bootstrap(self) -> None:

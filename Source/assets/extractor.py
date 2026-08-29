@@ -1,6 +1,6 @@
-from typing import Any, Generator
 from urllib3.response import BaseHTTPResponse
-from urllib3.response import BaseHTTPResponse
+from collections.abc import Generator
+from typing import Any
 import subprocess
 import functools
 import urllib3
@@ -230,7 +230,7 @@ def download_rōblox_asset(
             continue
         if response.status != 200:
             break
-        return response.data
+        return unzip(response.data)
 
     # Genuinely inaccessible with any known place iden.
     return None

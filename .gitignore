@@ -25,7 +25,16 @@ frm.cfg
 /GameConfig.toml
 Source/ssl/?*.*
 Source/.venv/
+Source/Roblox/
+Source/Logs/
+Source/ssl/
+skins
+logs
+f3x
 
+repomix-output.xml
+repomix.config.json
+.repomixignore
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
 

@@ -1,14 +1,121 @@
+import os
+import json
+import shutil
+import re
 from web_server._logic import web_server_handler, server_path
 from config_type.types import structs, wrappers
 import util.versions as versions
 from game_config import obj_type
 
+# Стандартный шаблон скина, если папка или default.json отсутствуют
+DEFAULT_AVATAR = {
+    "type": "R6",
+    "items": [],
+    "scales": {
+        "height": 1.0,
+        "width": 1.0,
+        "head": 1.0,
+        "depth": 1.0,
+        "proportion": 0.0,
+        "body_type": 0.0
+    },
+    "colors": {
+        "head": 1,
+        "left_arm": 1,
+        "left_leg": 1,
+        "right_arm": 1,
+        "right_leg": 1,
+        "torso": 1
+    }
+}
 
 def get_avatar(id_num: int, game_config: obj_type) -> structs.avatar_data:
     user_code = get_user_code(id_num, game_config)
-    assert user_code is not None
-    return game_config.server_core.retrieve_avatar(id_num, user_code)
+    
+    # Если код пользователя не найден в базе данных, используем временное имя
+    if user_code is None:
+        user_code = f"Player_{id_num}"
 
+    # Создаем папку 'skins' в текущей рабочей директории, если её нет
+    skins_dir = os.path.join(os.getcwd(), 'skins')
+    os.makedirs(skins_dir, exist_ok=True)
+
+    default_json_path = os.path.join(skins_dir, 'default.json')
+    
+    # Если default.json не существует, создаем его с базовым шаблоном
+    if not os.path.exists(default_json_path):
+        try:
+            with open(default_json_path, 'w', encoding='utf-8') as f:
+                json.dump(DEFAULT_AVATAR, f, indent=4)
+        except Exception as e:
+            print(f"Error creating default.json: {e}")
+
+    # Очищаем имя пользователя от недопустимых в путях символов
+    safe_user_code = re.sub(r'[^a-zA-Z0-9_\-]', '_', user_code)
+    user_json_path = os.path.join(skins_dir, f'{safe_user_code}.json')
+
+    # Если файла скина для конкретного игрока нет, копируем default.json под его именем
+    if not os.path.exists(user_json_path) and os.path.exists(default_json_path):
+        try:
+            shutil.copy(default_json_path, user_json_path)
+        except Exception as e:
+            print(f"Error copying default.json to {safe_user_code}.json: {e}")
+
+    # Пытаемся прочитать JSON-файл скина игрока
+    try:
+        target_path = user_json_path if os.path.exists(user_json_path) else default_json_path
+        with open(target_path, 'r', encoding='utf-8') as f:
+            avatar_raw = json.load(f)
+    except Exception as e:
+        print(f"Error reading skin JSON for {user_code}: {e}. Using hardcoded default.")
+        avatar_raw = DEFAULT_AVATAR
+
+    # Безопасно парсим значения и приводим их к типам данных, которые ожидает движок RFD
+    try:
+        raw_type = avatar_raw.get("type", "R15")
+        # Приводим к enum-типу (R6 или R15)
+        parsed_type = structs.avatar_type(raw_type)
+        
+        # Получаем массивы ID надетых ассетов
+        parsed_items = avatar_raw.get("items", [])
+        
+        # Парсим масштабы тела
+        raw_scales = avatar_raw.get("scales", DEFAULT_AVATAR["scales"])
+        parsed_scales = structs.avatar_scales(
+            height=float(raw_scales.get("height", 1.0)),
+            width=float(raw_scales.get("width", 1.0)),
+            head=float(raw_scales.get("head", 1.0)),
+            depth=float(raw_scales.get("depth", 1.0)),
+            proportion=float(raw_scales.get("proportion", 0.0)),
+            body_type=float(raw_scales.get("body_type", 0.0))
+        )
+        
+        # Парсим цвета частей тела (BrickColor ID)
+        raw_colors = avatar_raw.get("colors", DEFAULT_AVATAR["colors"])
+        parsed_colors = structs.avatar_colors(
+            head=int(raw_colors.get("head", 1)),
+            left_arm=int(raw_colors.get("left_arm", 1)),
+            left_leg=int(raw_colors.get("left_leg", 1)),
+            right_arm=int(raw_colors.get("right_arm", 1)),
+            right_leg=int(raw_colors.get("right_leg", 1)),
+            torso=int(raw_colors.get("torso", 1))
+        )
+
+        return structs.avatar_data(
+            type=parsed_type,
+            items=parsed_items,
+            scales=parsed_scales,
+            colors=parsed_colors
+        )
+    except Exception as e:
+        print(f"Error parsing skin structure for {user_code}: {e}")
+        # Защитный фоллбек, чтобы Студия или сервер не упали при ошибке в JSON
+        return structs.avatar_data(
+            type=structs.avatar_type.R15,
+            items=[],
+            scales=structs.avatar_scales(**DEFAULT_AVATAR["scales"]),
+            colors=structs.avatar_colors(**DEFAULT_AVATAR["colors"])
+        )
 
 def get_user_code(id_num: int, game_config: obj_type) -> str | None:
     database = game_config.storage.players

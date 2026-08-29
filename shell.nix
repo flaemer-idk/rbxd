@@ -1,12 +1,24 @@
 { pkgs ? import <nixpkgs> {} }:
+let
+  rfd-python = pkgs.python3.withPackages (ps: with ps; [
+    pygobject3
+    websocket-client
+    requests
+    trustme
+    urllib3
+    pyzstd
+    py7zr
+    lz4
+  ]);
+in
 pkgs.mkShell {
   buildInputs = with pkgs; [
+    umu-launcher
     wineWow64Packages.stable
     winetricks
     cage
     cabextract unzip p7zip
-    python312
-    python312Packages.pip
+    rfd-python
   ];
   shellHook = ''
    echo "export WINEPREFIX="$PWD/.wine-rfd""

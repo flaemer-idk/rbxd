@@ -26,6 +26,7 @@ from .subparsers.args_aux import (
     backend as _,
 )
 
+
 def parse_arg_list(args: list[str] | None) -> list[routines.base_entry] | None:
     '''
     Generates a list of routines from `launcher/subparser` scripts, filtering by the `mode` command-line parameter.

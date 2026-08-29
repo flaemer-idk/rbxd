@@ -1,19 +1,13 @@
-# pyright: reportImportCycles=false
-# TODO: simplify import heirarchy
-
 # Standard library imports
 from typing import Callable
 import dataclasses
 import functools
-import os
 import shutil
-import ssl
+import os
 
 # Internal or local application imports
 import util.const
 from . import material, queue, returns, serialisers, extractor, thumbnail
-
-ssl._create_default_https_context = ssl._create_unverified_context
 
 
 @dataclasses.dataclass
@@ -113,6 +107,7 @@ class asseter:
     def resolve_asset_query(self, query: dict[str, str]) -> int | str | None:
         candidate_funcs = [
             (query.get('id'), self.resolve_asset_id),
+            (query.get('ID'), self.resolve_asset_id),
             (query.get('aid'), self.resolve_asset_id),
             (query.get('AssetID'), self.resolve_asset_id),
             (query.get('assetid'), self.resolve_asset_id),
