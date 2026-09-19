@@ -36,6 +36,16 @@ game.Players.PlayerAdded:connect(function(Player)
     Player:Kick('Player is not allowed.')
 end)
 
+game.Players.PlayerRemoving:connect(function(Player)
+    spawn(function()
+        HttpRbxApiService:PostAsync(
+            "rfd/player-left?userId=" .. Player.UserId,
+            "",
+            Enum.ThrottlingPriority.Extreme
+        )
+    end)
+end)
+
 do
 %(startup_script)s
 end

@@ -18,6 +18,7 @@ from . import (
     studio,
     misc,
     fvars,
+    presence,
 )
 
 

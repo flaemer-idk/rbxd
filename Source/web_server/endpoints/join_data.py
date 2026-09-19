@@ -86,6 +86,9 @@ def perform_and_send_join(self: web_server_handler, additional_return_data: dict
 
     (id_num, username) = result
 
+    # Track this player as online until the RCC reports them leaving.
+    self.server.presence.joined(id_num, user_code, username)
+
     join_data = {
         'ServerConnections': [
             {

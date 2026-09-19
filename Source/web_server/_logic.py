@@ -19,6 +19,7 @@ from typing import Any, Callable, override
 import util.versions as versions
 import game_config
 import logger
+from . import presence_store
 
 # Cryptography imports
 import trustme
@@ -88,6 +89,7 @@ class web_server(http.server.ThreadingHTTPServer):
         self.game_config = game_config
         self.data_transferer = game_config.data_transferer
         self.storage = game_config.storage
+        self.presence = presence_store.PresenceStore()
         self.server_mode = server_mode
         self.logger = log_filter
         self.is_ipv6 = is_ipv6

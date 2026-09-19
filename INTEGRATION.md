@@ -390,3 +390,88 @@ rbxdclient превращается в тонкий heartbeat для случа�
 и бинарников — он может жить даже на машине без Wine вообще (например, фронт в контейнере),
 если `AssetCache` уже warm. Это, кстати, делает ассеты/аватар/маркетплейс доступными 24/7
 без единого виндового процесса. А вот `--skip_web` (RCC-only) — наоборот, требует Wine.
+
+## 12. Wishlist: каталог ассетов (AssetTypeId + поиск)
+
+**Проблема.** AssetCache плоский: `AssetCache/000012221720` — без расширения, без типа,
+без имени. Собрать скин или найти «тот самый звук» можно только вслепую, по ID.
+
+**Тип узнать можно**, и бесплатно. Эндпойнт публичный, кука не нужно (проверено на реальных
+ассетах из живого кэша):
+
+```
+GET https://economy.roblox.com/v2/assets/<id>/details
+  → {"AssetTypeId": 4, "Name": "sword.mesh", "Creator": {...}, ...}
+```
+
+Маппинг `AssetTypeId` → имя: 1 Image, 2 TShirt, 3 Audio, 4 Mesh, 9 Model, 11 Shirt,
+12 Pants, 13 ShirtGraphic, 15 Face, 16 Animation, 17 Gear, 19 HairAccessory, …
+(полный список — `AssetType` в документации Roblox). Тот же вызов rbxd **уже делает**
+внутри `assets/extractor.py:get_creator_place_idens` — просто выбрасывает тип.
+
+**Предлагаемая схема (идея, не реализовано):**
+
+```
+┌─ один раз: индексация ────────────────────────────────────────┐
+│  обойти AssetCache → для каждого ID: GET /v2/assets/<id>/details │
+│  → sqlite: (id, type, name, creator)                            │
+│  → потом только свежескачанные (diff по списку файлов)          │
+└────────────────────────────────────────────────────────────────┘
+        ↓
+rbxd:  GET /rfd/assets?type=Pants&q=blue   ← поиск по имени/типу
+        ↓
+rbxdserver: проксирует в rbxd
+        ↓
+rbxdclient: UI «надеть скин» / мини-Toolbox:
+  рубашки ← type 11   штаны ← 12   волосы ← 19   лицо ← 15
+```
+
+**Зачем это rbxdserver/rbxdclient:** сейчас «скин» — это ручная сборка `items: [id…]` в
+`skins/<user_code>.json`. С каталогом клиент сможет показать «вот вся одежда, которая
+есть в кэше», и надеть выбранное одной кнопкой. Мини-Toolbox в клиенте — тот же механизм:
+поиск по имени вместо слепого перебора ID.
+
+**Глобальный AssetCache.** Сейчас кэш отдельный на каждый плейс (`<place>/AssetCache`),
+а одни и те же ассеты качаются заново для каждого. Общий кэш + общий индекс = одна
+индексация на всё, и скин, собранный в одном плейсе, виден в другом.
+
+## 13. Toolbox в Studio: что он просит, и как это увидеть
+
+**Studio работает** (wine/proton, `python3 _main.py studio`), Toolbox-плагин грузится —
+в FLog это видно: `Plugin load time 'builtin_Toolbox.rbxm': 123.7`.
+
+**Сниффать процессы НЕ нужно.** BaseURL переведён на локальный вебсервер
+(`save_app_settings` в `AppSettings.xml`), поэтому **любой** HTTP-запрос Studio —
+включая Toolbox — приходит в твой собственный rbxd-вебсервер. Маршрутизатор
+(`web_server/_logic.py:handle_request`) пишет в лог вообще каждый запрос
+(`log_message`: `{ GET } https://localhost:<port>/path`), а нереализованные
+отдают 404 — ровно они и есть TODO-список для Toolbox.
+
+**Рецепт, как собрать, чего не хватает:**
+
+```sh
+# 1. запустить Studio-режим (вебсервер + Studio в одном процессе)
+python3 Source/_main.py studio --config <place>/GameConfig.toml --backend proton
+
+# 2. открыть Toolbox, покликать категории/поиск
+
+# 3. собрать все URL, которые просил клиент
+grep -o 'https\?://[^ ]*' <лог вебсервера> | sed 's|https\?://[^/]*||; s|?.*||' | sort -u > /tmp/req.txt
+
+# 4. вычесть то, что уже реализовано
+grep -rh '@server_path' Source/web_server/endpoints/*.py \
+  | grep -oE "'/[^']+'" | tr -d "'" | sort -u > /tmp/impl.txt
+comm -23 /tmp/req.txt /tmp/impl.txt      # ← недостающие эндпойнты
+```
+
+**Что уже точно нужно** (из реального лога, 404-промахи мимо роутов):
+`/Analytics/Measurement.ashx`, `/Persistence/GetBlobUrl.ashx`,
+`/userblock/getblockedusers`, `/users/<id>/canmanage/<place>`. Catalog-API Toolbox
+(`catalog.roblox.com/…`) в логах ещё не появлялся — **надо открыть Toolbox в Studio и
+походить по нему**, тогда его запросы всплывут. `/Setting/QuietGet/StudioAppSettings/`
+(`fvars.py`) отдаёт Toolbox-флаги с `"Enabled": true` (`misc.py`), так что плагин не
+отключён — просто его API никто не обслуживает.
+
+**Альтернатива для запросов вне BaseURL.** Часть трафика может идти мимо вебсервера
+(Analytics на реальные хосты). Тогда — `ss -tunp` на pid Studio или mitmproxy, но для
+самого Toolbox хватает логов вебсервера.
