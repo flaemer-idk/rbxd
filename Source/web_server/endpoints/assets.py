@@ -22,7 +22,7 @@ def _(self: web_server_handler) -> bool:
         return True
 
     if (
-        asset_id == util.const.PLACE_IDEN_CONST and
+        asset_id == self.game_config.game_setup.place_iden and
         not self.is_privileged
     ):
         self.send_error(

@@ -60,8 +60,7 @@ def _(self: web_server_handler) -> bool:
     '''
     assert self.is_privileged
 
-    # Returns false if the thing trying to be saved isn't the place we're in.
-    if self.query['assetId'] != str(util.const.PLACE_IDEN_CONST):
+    if self.query['assetId'] != str(self.game_config.game_setup.place_iden):
         return False
 
     place_config = self.game_config.server_core.place_file

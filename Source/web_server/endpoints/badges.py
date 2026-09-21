@@ -26,7 +26,7 @@ def _(self: web_server_handler) -> bool:
 
     database.award(user_id_num, int(badge_id))
     self.send_data(
-        f'{username[0]} won {self.game_config.server_core.metadata.creator_name}\'s "{badge_data.name}" award!')
+        f'{username} won {self.game_config.server_core.metadata.creator_name}\'s "{badge_data.name}" award!')
 
     return True
 

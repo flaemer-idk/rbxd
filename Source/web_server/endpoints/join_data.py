@@ -32,7 +32,6 @@ def gen_player(config: game_config.obj_type, user_code: str) -> tuple[int, str, 
     # Keeps generating an iden number until it finds one that is not yet in the database.
     while True:
         iden_num = config.server_core.retrieve_user_id(user_code)
-
         username = config.server_core.retrieve_username(iden_num, user_code)
 
         result = database.add_player(
@@ -107,7 +106,7 @@ def perform_and_send_join(self: web_server_handler, additional_return_data: dict
         'BaseUrl':
             self.hostname,
         'PlaceId':
-            util.const.PLACE_IDEN_CONST,
+            self.game_config.game_setup.place_iden,
         'UserName':
             username,
         'DisplayName':
@@ -174,7 +173,7 @@ def _(self: web_server_handler) -> bool:
         'GameLocale': 'en_us#RobloxTranslateAbTest2',
         'SuperSafeChat': True,
         'ClientTicket': ' ',
-        'GameId': util.const.PLACE_IDEN_CONST,
+        'GameId': self.game_config.game_setup.place_iden,
         'CreatorId': 0,
         'CreatorTypeEnum': 'User',
         'CookieStoreFirstTimePlayKey': 'rbx_evt_ftp',
@@ -242,7 +241,7 @@ def _(self: web_server_handler) -> bool:
     query_args |= self.query
     user_code = query_args['UserCode']
 
-    # Keeps returning 1 ("Server found, loading...") until RCC is marked as ready.
+    # Возвращаем 1 ("Server found, loading..."), пока RCC не передаст управление
     if not self.server.data_transferer.was_triggered:
         self.send_json({
             'status': 1,
@@ -252,6 +251,7 @@ def _(self: web_server_handler) -> bool:
             'authenticationTicket': '67',
             'message': None,
         })
+        return True
 
     result = init_player(self.game_config, user_code)
     if result is None:

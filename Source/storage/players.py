@@ -76,7 +76,10 @@ class database(_logic.sqlite_connector_base):
             """,
             values=(value,),
         )
-        return self.unwrap_result(result)
+        # Выбираем ровно одно поле, поэтому возвращаем скаляр, а не строку
+        # целиком (иначе вызывающий код получит кортеж вроде `('Wercz',)`
+        # и сломается на первом же `re.sub`/`send_data`).
+        return self.unwrap_result(result, only_first_field=True)
 
     def check(self, usercode: str) -> tuple[int, str] | None:
         '''

@@ -36,6 +36,7 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
+        self.place_iden = self.game_config.game_setup.place_iden
         (
             self.web_port, self.rcc_port,
         ) = self.maybe_differenciate_web_and_rcc_stuff(
@@ -55,47 +56,16 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
         return self.game_config.game_setup.roblox_version
 
     def save_thumbnail(self) -> None:
-        '''
-        Saves the thumbnail data for the current game config.
-        '''
-        config = self.game_config
-        cache = config.asset_cache
-        icon_uri = config.server_core.metadata.icon_uri
-        if icon_uri is None:
-            return
-
-        try:
-            thumbnail_data = icon_uri.extract() or bytes()
-            cache.add_asset(const.THUMBNAIL_ID_CONST, thumbnail_data)
-        except Exception as _:
-            self.logger.log(
-                text='Warning: thumbnail data not found.',
-                context=logger.log_context.PYTHON_SETUP,
-            )
+        self.game_config.save_thumbnail()
 
     def save_place_file(self) -> None:
         '''
         Parses and copies the place file (specified in the config file) to the asset cache.
         '''
         config = self.game_config
+        config.save_place_file()
+
         place_uri = config.server_core.place_file.rbxl_uri
-
-        cache = config.asset_cache
-        raw_data = place_uri.extract()
-        if raw_data is None:
-            raise Exception(f'Failed to extract data from {place_uri}.')
-
-        # Parses the raw data using the `rbxl` method.
-        rbxl_data, _changed = assets.serialisers.parse(
-            raw_data, {assets.serialisers.method.rbxl}
-        )
-
-        # Saves `rbxl_data` to a local file in `AssetCache`.
-        cache.add_asset(
-            self.place_iden,
-            rbxl_data,
-        )
-
         if (
             place_uri.uri_type != wrappers.uri_type.LOCAL and
             config.server_core.place_file.enable_saveplace
@@ -161,48 +131,27 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
                 "Mode": "GameServer",
                 "GameId": 13058,
                 "Settings": {
-                    "Type":
-                        "Avatar",
-                    "PlaceId":
-                        self.place_iden,
-                    "GameId":
-                        "Test",
-                    "MachineAddress":
-                        base_url,
-                    "PlaceFetchUrl":
-                        f"{base_url}/asset/?id={self.place_iden}",
-                    "MaxPlayers":
-                        int(1e9),
-                    "PreferredPlayerCapacity":
-                        int(1e9),
-                    "CharacterAppearance":
-                        f"{base_url}/v1.1/avatar-fetch",
-                    "MaxGameInstances":
-                        1,
-                    "GsmInterval":
-                        5,
-                    "ApiKey":
-                        "",
-                    "DataCenterId":
-                        "69420",
-                    "PlaceVisitAccessKey":
-                        "",
-                    "UniverseId":
-                        13058,
-                    "MatchmakingContextId":
-                        1,
-                    "CreatorId":
-                        0,
-                    "CreatorType":
-                        "Group",
-                    "PlaceVersion":
-                        1,
-                    "BaseUrl":
-                        f"{base_url}/.127.0.0.1",
-                    "JobId":
-                        "Test",
-                    "PreferredPort":
-                        self.rcc_port,
+                    "Type": "Avatar",
+                    "PlaceId": self.place_iden,
+                    "GameId": "Test",
+                    "MachineAddress": base_url,
+                    "PlaceFetchUrl": f"{base_url}/asset/?id={self.place_iden}",
+                    "MaxPlayers": int(1e9),
+                    "PreferredPlayerCapacity": int(1e9),
+                    "CharacterAppearance": f"{base_url}/v1.1/avatar-fetch",
+                    "MaxGameInstances": 1,
+                    "GsmInterval": 5,
+                    "ApiKey": "",
+                    "DataCenterId": "69420",
+                    "PlaceVisitAccessKey": "",
+                    "UniverseId": 13058,
+                    "MatchmakingContextId": 1,
+                    "CreatorId": 0,
+                    "CreatorType": "Group",
+                    "PlaceVersion": 1,
+                    "BaseUrl": f"{base_url}/.127.0.0.1",
+                    "JobId": "Test",
+                    "PreferredPort": self.rcc_port,
                 },
                 "Arguments": {},
             }, f)
@@ -238,34 +187,38 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
         assert stdout is not None
         stream_data = bytearray()
         while True:
-            stream_data.extend(stdout.read1())
             try:
-                line_index = stream_data.index(b'\n') + 1
-            except ValueError:
+                data = stdout.read1()
+            except Exception:
+                data = b''
+
+            if not data:
+                if self.popen_mains and self.popen_mains[0].poll() is not None:
+                    break
+                time.sleep(0.02)
                 continue
-            line = bytes(stream_data[:line_index])
-            del stream_data[:line_index]
-            self.logger.log(
-                line.rstrip(b'\r\n'),
-                context=logger.log_context.RCC_SERVER,
-            )
 
-            action = log_action.check(line)
+            stream_data.extend(data)
+            while b'\n' in stream_data:
+                line_index = stream_data.index(b'\n') + 1
+                line = bytes(stream_data[:line_index])
+                del stream_data[:line_index]
 
-            # The `restart` and `kill` methods must take place in a new thread.
-            # It waits for *this* thread to finish running.
-            match action:
-                case log_action.LogAction.RESTART:
-                    threading.Thread(target=self.restart).start()
-                    break
-                case log_action.LogAction.TERMINATE:
-                    threading.Thread(target=self.kill).start()
-                    break
-                case log_action.LogAction.READY:
-                    # TODO: make RCC logging more speedy.
-                    pass
-                case log_action.LogAction.PROCEED:
-                    pass
+                self.logger.log(
+                    line.rstrip(b'\r\n'),
+                    context=logger.log_context.RCC_SERVER,
+                )
+
+                action = log_action.check(line)
+                match action:
+                    case log_action.LogAction.RESTART:
+                        threading.Thread(target=self.restart).start()
+                        return
+                    case log_action.LogAction.TERMINATE:
+                        threading.Thread(target=self.kill).start()
+                        return
+                    case _:
+                        pass
 
         stdout.flush()
 

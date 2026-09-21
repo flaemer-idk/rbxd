@@ -6,6 +6,7 @@ import time
 from config_type.types import structs, wrappers
 from config_type.types.callable import obj_type as callable
 from . import allocateable
+import util.const
 import util.versions
 import assets
 
@@ -21,6 +22,7 @@ class config_type(allocateable.obj_type):
     class game_setup(allocateable.obj_type):
         class asset_cache(allocateable.obj_type):
             dir_path: wrappers.path_str = './AssetCache'
+            shared_dir_path: wrappers.path_str | None = None
             name_template: callable[[int | str], str] = (
                 lambda asset_iden: (
                     f'{asset_iden:011d}'
@@ -37,7 +39,7 @@ class config_type(allocateable.obj_type):
         # Don't count too much on 2021E.
         # I really recommend that people manually specify which version of Rōblox they want to run.
         roblox_version: util.versions.rōblox = util.versions.rōblox.v463
-
+        place_iden: int = util.const.PLACE_IDEN_CONST
         ready_delay_sec: float = 3
 
     class server_core(allocateable.obj_type):

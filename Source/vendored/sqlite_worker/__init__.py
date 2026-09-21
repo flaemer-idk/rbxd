@@ -20,9 +20,12 @@ class SqliteWorker:
         self._lock = threading.Lock()
         self._close_event = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        # Поток читает `execute_init`/`max_count` сразу при старте (`_process_queries`),
+        # поэтому они должны быть заданы ДО `_thread.start()` — иначе гонка:
+        # AttributeError 'SqliteWorker' object has no attribute 'execute_init'.
         self.execute_init = execute_init
         self.max_count = max_count
+        self._thread.start()
 
     def _run(self):
         try:

@@ -12,18 +12,18 @@ def purchase_gamepass(self: web_server_handler, user_id_num: int, gamepass_id: i
     gamepass = self.game_config.remote_data.gamepasses.get(gamepass_id)
 
     if gamepass is None:
-        return False  # Gamepass does not exist
+        return False
 
     storage = self.server.storage
     if storage.gamepasses.check(user_id_num, gamepass_id):
-        return False  # You already own this!
+        return False
 
     funds = storage.funds.check(user_id_num)
     if funds is None:
-        return False  # Couldn't load funds
+        return False
 
     if funds < gamepass.price:
-        return False  # Too poor!
+        return False
 
     storage.gamepasses.update(user_id_num, gamepass_id)
     storage.funds.add(user_id_num, -1 * gamepass.price)
@@ -34,15 +34,15 @@ def purchase_devproduct(self: web_server_handler, user_id_num: int, devproduct_i
     devproduct = self.game_config.remote_data.devproducts.get(devproduct_id)
 
     if devproduct is None:
-        return  # Gamepass does not exist
+        return None
 
     storage = self.server.storage
     funds = storage.funds.check(user_id_num)
     if funds is None:
-        return  # Couldn't load funds
+        return None
 
     if funds < devproduct.price:
-        return  # Too poor!
+        return None
 
     storage.devproducts.update(user_id_num, devproduct_id)
     storage.funds.add(user_id_num, -1 * devproduct.price)
@@ -51,10 +51,7 @@ def purchase_devproduct(self: web_server_handler, user_id_num: int, devproduct_i
 
 @server_path('/Game/GamePass/GamePassHandler.ashx', commands={'GET'})
 def _(self: web_server_handler) -> bool:
-    '''
-    TODO: handle social requests, whatever these are.
-    '''
-    match self.query['Action']:
+    match self.query.get('Action'):
         case 'HasPass':
             def check() -> bool:
                 gamepass_id = int(self.query['PassID'])
@@ -149,8 +146,6 @@ def _(self: web_server_handler) -> bool:
     form_content = str(self.read_content(), encoding='utf-8')
     form_data = dict(urllib.parse.parse_qsl(form_content))
     gamepass_id = int(form_data['productId'])
-
-    # TODO: actually make gamepass sales secure.
     user_id_num = json.loads(self.headers['Roblox-Session-Id'])['UserId']
 
     if purchase_gamepass(self, user_id_num, gamepass_id):
@@ -249,7 +244,7 @@ def _(self: web_server_handler) -> bool:
     for (user_id_num, devproduct_id, receipt) in self.server.storage.devproducts.receipts():
         receipt_dict.append({
             "playerId": user_id_num,
-            "placeId": util.const.PLACE_IDEN_CONST,
+            "placeId": self.game_config.game_setup.place_iden,
             "receipt": receipt,
             "actionArgs": [
                 {
@@ -340,13 +335,12 @@ def _(self: web_server_handler) -> bool:
         })
         return True
 
-    # Returns an error if the thing trying to be accessed isn't the place we're in.
-    if asset_id != util.const.PLACE_IDEN_CONST:
+    if asset_id != self.game_config.game_setup.place_iden:
         self.send_error(404)
         return True
 
     self.send_json({
-        'AssetId': util.const.PLACE_IDEN_CONST,
+        'AssetId': self.game_config.game_setup.place_iden,
         'ProductId': 13831621,
         'Name': metadata.title,
         'Description': metadata.description,

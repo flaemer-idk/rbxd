@@ -174,11 +174,19 @@ Source/Roblox/v347/, v463/          — ~1 ГБ БИНАРНИКОВ, В .gitign
 ```
 
 **Скины (форковая фича!)** — `web_server/endpoints/avatar.py:get_avatar` читает аватар из
-`skins/<user_code>.json` (рядом с cwd процесса), а не только через конфиг-хук
-`retrieve_avatar`. При первом заходе `skins/default.json` копируется в
-`skins/<ник>.json`; формат — `{"type":"R6"|"R15","items":[asset_id…],"scales","colors"}`;
-читается **на каждый запрос** — смена скина работает вживую. Подробности —
-`../rbxdserver/DESIGN.md` (раздел «Скины»).
+`data/skins/<user_code>.json` (корень данных фиксирован: `<rbxd>/data`, не cwd), а не
+только через конфиг-хук `retrieve_avatar`. При первом заходе
+`data/skins/default.json` копируется в `data/skins/<ник>.json`; формат —
+`{"type":"R6"|"R15","items":[id|URL…],"bundles":[678|URL…],"scales","colors"}`:
+и `items`, и `bundles` принимают **ссылки с сайта целиком** (`roblox.com/catalog/<id>/Name`,
+`roblox.com/bundles/<id>/Name`) — id вытаскивается сам. Тип ассета спрашивается
+у каталога (`catalog.roblox.com/v1/catalog/items/<id>/details`) и кэшируется в
+глобальном `data/catalog.sqlite` (`catalog_cache.py`; таблицы `bundles`/`assets`,
+TTL 30 дней, при ошибке сети — устаревший кэш). Раскладка по `assetType`:
+анимации (48–55) → `animationAssetIds`, части тела (17/27–31) → типизированные
+элементы `assetAndAssetTypeIds` (v463, замена конечностей R15), аксессуары →
+`accessoryVersionIds` (v347). Скин читается **на каждый запрос** — смена скина
+работает вживую. Подробности — `../rbxdserver/DESIGN.md` (раздел «Скины»).
 
 Корневые файлы: `CHANGELOG.md` (апстримный), `shell.nix` (NixOS dev-shell: umu-launcher,
 wineWow64, cage, winetricks), `pyrightconfig.json` (include: `Source`), `.python-version` (3.13),

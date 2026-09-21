@@ -15,12 +15,15 @@
 | `WINEDEBUG=-all` | `_main.py` ставит сам; не нужна, но и не мешает. |
 | `WINEPREFIX` | для `--backend wine`; rbxdserver держит `<data-dir>/wine/.wine-rfd`. |
 | `PROTONPATH`, `UMU_RUNTIME_UPDATE=0` | rbxd ставит сам для `--backend proton` (если не задано `--proton-path`). |
-| `RFD_DATA_DIR` | переопределяет «корень данных» rbxd (`util.resource.get_rfd_top_dir`); по умолчанию = **cwd процесса**. Поэтому наружный код обязан запускать rbxd из того каталога, где должны лежать `AssetCache/`, `_.sqlite`, `logs/`. |
+| `data/env.env` | не env-переменная, а файл: читается при старте (`KEY=VALUE`, `#` — комментарии). Переменные из файла **не перебивают** реальные env. Сюда кладут `ROBLOSECURITY` — единственную cookie, которую rbxd использует (скачивание приватных ассетов). |
+| ~~`RFD_DATA_DIR`~~ | **удалён.** Корень данных теперь фиксированный `<rbxd>/data` (`util.resource.get_rfd_top_dir`); переменная игнорируется. |
 
-**cwd = точка монтирования состояния.** `AssetCache`, sqlite, `logs/`, `LocalStorage/`
-создаются относительно cwd (или `RFD_DATA_DIR`). Это неявный контракт, который нынешний
-rbxdclient нарушить не может, т.к. пишет `local_server.log` рядом — **не повторять**:
-в реврайте надо явно задавать cwd через `subprocess(cwd=…)`.
+**Корень данных — `<rbxd>/data`, не cwd.** Раньше `logs/`, `LocalStorage/`
+создавались относительно cwd (или `RFD_DATA_DIR`) и расползались по каталогам
+запуска. Теперь: `logs/`, `LocalStorage/`, `data/skins/`, `data/catalog.sqlite`
+→ `<rbxd>/data/`; `AssetCache/` и `_.sqlite` → **рядом с `GameConfig.toml`
+плейса** (не от cwd). От cwd зависит только поиск относительного `--config`
+и конфиг со stdin (`-`) — наружный код всегда передаёт абсолютный путь.
 
 ## 2. Команды запуска (эталонные)
 
@@ -134,7 +137,7 @@ player.exe -a https://<web_host>:<web_port>/login/negotiate.ashx \
   (несколько `--config`), но наружу не сообщает их порты — слежение целиком на наружном коде.
 - **Один живой RCC на версию Roblox на дерево rbxd** (ограничение самого Roblox, не rbxd):
   `GameServer.json` и `RCCFlagOverride.json` (v463) / `RCCService.json` (v347) лежат в общем
-  каталоге `Source/Roblox/<version>/Server/`, а не per-place. Два v463-плейса с RCC
+  каталоге `data/Roblox/<version>/Server/`, а не per-place. Два v463-плейса с RCC
   одновременно затрут друг другу файлы. v347 + v463 — уживаются (каталоги разные).
   На практике: «веб 24/7 для всех, RCC для текущего» (см. §10) — это не компромисс, а
   единственно правильный режим.
@@ -346,6 +349,12 @@ rbxdclient превращается в тонкий heartbeat для случа�
 
 ## 10. Wishlist: веб-часть 24/7, RCC по требованию
 
+> **Статус (2026-09): реализовано отдельным проектом `../rbxdweb/`** — Go-порт
+> этой веб-части: один HTTPS-процесс 24/7 без Wine/Python, сам парсит `.rbxl`
+> в AssetCache (пункт 1 wishlist'а), перечитывает конфиг через `POST /rfd/reload`
+> (пункт 3), а пункт «RCC подключается к работающему вебсерверу по порту» —
+> это `--web_port` как здесь. Webhook `--on-join-url` замыкает «плейс по требованию».
+
 Цель: вебсервер каждого плейса крутится **постоянно и дёшево** (чистый Python, без Wine),
 а тяжёлый `RCCService.exe` поднимается только когда в плейс реально играют.
 
@@ -371,11 +380,9 @@ rbxdclient превращается в тонкий heartbeat для случа�
 
 **Что починить в rbxd, чтобы это стало удобным (wishlist):**
 
-1. **`save_place_file()` / `save_thumbnail()` переехали из `rcc.bootstrap` в web-часть.**
-   Сейчас веб-only с холодного старта не раздаёт плейс — AssetCache пустой. Lucky case:
-   `AssetCache` персистентный на диске (`clear_on_start = false`), так что после одного
-   запуска с RCC веб-only раздаёт плейс с диска и так. Но для честного холодного старта
-   парсинг плейса должен делать вебсервер.
+1. ✅ **`save_place_file()` / `save_thumbnail()` переехали из `rcc.bootstrap` в web-часть**
+   (`game_config.save_place_file()`, вызывает и веб-режим, и RCC-бутстрап).
+   **Статус (2026-09): сделано.**
 2. **Стабильные `web_port` на плейс.** RCC подключается к уже работающему вебсерверу по
    порту — значит порт плейса не должен плавать между запусками (сейчас наружный код
    берёт свободный порт на каждый старт). Вариант: фиксить в `GameConfig.toml` или
@@ -383,95 +390,15 @@ rbxdclient превращается в тонкий heartbeat для случа�
 3. **Перечитка `GameConfig.toml` без рестарта.** `get_cached_config` и `read_file_data`
    под `functools.cache` — 24/7 вебсервер не увидит изменений конфига. Wishlist:
    эндпойнт `/rfd/reload` или mtime-проверка.
-4. **(следствие ограничения Roblox)** больше одного живого RCC на версию нельзя — см. §7,
+4. ✅ **`place_iden` в GameConfig + общий пул ассетов.** `[game_setup] place_iden`
+   (дефолт 1818) и общий пул `data/Assets/` (`asset_cache.shared_dir_path`, None → пул):
+   скачанные ассеты копятся глобально один раз; файл плейса и иконка — только в
+   локальном кэше (403-защита и отсутствие коллизий сохраняются).
+   **Статус (2026-09): сделано.**
+5. **(следствие ограничения Roblox)** больше одного живого RCC на версию нельзя — см. §7,
    но это не мешает: веб 24/7 для всех плейсов, RCC для того, во что играют.
 
 **Что не нужно делать:** веб-only процесс (`--skip_rcc`) не требует `WINEPREFIX`, `cage`
 и бинарников — он может жить даже на машине без Wine вообще (например, фронт в контейнере),
 если `AssetCache` уже warm. Это, кстати, делает ассеты/аватар/маркетплейс доступными 24/7
 без единого виндового процесса. А вот `--skip_web` (RCC-only) — наоборот, требует Wine.
-
-## 12. Wishlist: каталог ассетов (AssetTypeId + поиск)
-
-**Проблема.** AssetCache плоский: `AssetCache/000012221720` — без расширения, без типа,
-без имени. Собрать скин или найти «тот самый звук» можно только вслепую, по ID.
-
-**Тип узнать можно**, и бесплатно. Эндпойнт публичный, кука не нужно (проверено на реальных
-ассетах из живого кэша):
-
-```
-GET https://economy.roblox.com/v2/assets/<id>/details
-  → {"AssetTypeId": 4, "Name": "sword.mesh", "Creator": {...}, ...}
-```
-
-Маппинг `AssetTypeId` → имя: 1 Image, 2 TShirt, 3 Audio, 4 Mesh, 9 Model, 11 Shirt,
-12 Pants, 13 ShirtGraphic, 15 Face, 16 Animation, 17 Gear, 19 HairAccessory, …
-(полный список — `AssetType` в документации Roblox). Тот же вызов rbxd **уже делает**
-внутри `assets/extractor.py:get_creator_place_idens` — просто выбрасывает тип.
-
-**Предлагаемая схема (идея, не реализовано):**
-
-```
-┌─ один раз: индексация ────────────────────────────────────────┐
-│  обойти AssetCache → для каждого ID: GET /v2/assets/<id>/details │
-│  → sqlite: (id, type, name, creator)                            │
-│  → потом только свежескачанные (diff по списку файлов)          │
-└────────────────────────────────────────────────────────────────┘
-        ↓
-rbxd:  GET /rfd/assets?type=Pants&q=blue   ← поиск по имени/типу
-        ↓
-rbxdserver: проксирует в rbxd
-        ↓
-rbxdclient: UI «надеть скин» / мини-Toolbox:
-  рубашки ← type 11   штаны ← 12   волосы ← 19   лицо ← 15
-```
-
-**Зачем это rbxdserver/rbxdclient:** сейчас «скин» — это ручная сборка `items: [id…]` в
-`skins/<user_code>.json`. С каталогом клиент сможет показать «вот вся одежда, которая
-есть в кэше», и надеть выбранное одной кнопкой. Мини-Toolbox в клиенте — тот же механизм:
-поиск по имени вместо слепого перебора ID.
-
-**Глобальный AssetCache.** Сейчас кэш отдельный на каждый плейс (`<place>/AssetCache`),
-а одни и те же ассеты качаются заново для каждого. Общий кэш + общий индекс = одна
-индексация на всё, и скин, собранный в одном плейсе, виден в другом.
-
-## 13. Toolbox в Studio: что он просит, и как это увидеть
-
-**Studio работает** (wine/proton, `python3 _main.py studio`), Toolbox-плагин грузится —
-в FLog это видно: `Plugin load time 'builtin_Toolbox.rbxm': 123.7`.
-
-**Сниффать процессы НЕ нужно.** BaseURL переведён на локальный вебсервер
-(`save_app_settings` в `AppSettings.xml`), поэтому **любой** HTTP-запрос Studio —
-включая Toolbox — приходит в твой собственный rbxd-вебсервер. Маршрутизатор
-(`web_server/_logic.py:handle_request`) пишет в лог вообще каждый запрос
-(`log_message`: `{ GET } https://localhost:<port>/path`), а нереализованные
-отдают 404 — ровно они и есть TODO-список для Toolbox.
-
-**Рецепт, как собрать, чего не хватает:**
-
-```sh
-# 1. запустить Studio-режим (вебсервер + Studio в одном процессе)
-python3 Source/_main.py studio --config <place>/GameConfig.toml --backend proton
-
-# 2. открыть Toolbox, покликать категории/поиск
-
-# 3. собрать все URL, которые просил клиент
-grep -o 'https\?://[^ ]*' <лог вебсервера> | sed 's|https\?://[^/]*||; s|?.*||' | sort -u > /tmp/req.txt
-
-# 4. вычесть то, что уже реализовано
-grep -rh '@server_path' Source/web_server/endpoints/*.py \
-  | grep -oE "'/[^']+'" | tr -d "'" | sort -u > /tmp/impl.txt
-comm -23 /tmp/req.txt /tmp/impl.txt      # ← недостающие эндпойнты
-```
-
-**Что уже точно нужно** (из реального лога, 404-промахи мимо роутов):
-`/Analytics/Measurement.ashx`, `/Persistence/GetBlobUrl.ashx`,
-`/userblock/getblockedusers`, `/users/<id>/canmanage/<place>`. Catalog-API Toolbox
-(`catalog.roblox.com/…`) в логах ещё не появлялся — **надо открыть Toolbox в Studio и
-походить по нему**, тогда его запросы всплывут. `/Setting/QuietGet/StudioAppSettings/`
-(`fvars.py`) отдаёт Toolbox-флаги с `"Enabled": true` (`misc.py`), так что плагин не
-отключён — просто его API никто не обслуживает.
-
-**Альтернатива для запросов вне BaseURL.** Часть трафика может идти мимо вебсервера
-(Analytics на реальные хосты). Тогда — `ss -tunp` на pid Studio или mitmproxy, но для
-самого Toolbox хватает логов вебсервера.
