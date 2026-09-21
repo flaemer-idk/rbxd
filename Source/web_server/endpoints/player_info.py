@@ -26,7 +26,10 @@ def _(self: web_server_handler, match: re.Match[str]) -> bool:
         id_num,
         database.player_field.USERNAME,
     )
-    assert username is not None
+    if username is None:
+        # Игрока с таким iden_num ещё нет в БД плейса (он ни разу не заходил).
+        self.send_error(404)
+        return True
 
     self.send_json({'Username': username})
     return True
@@ -42,9 +45,14 @@ def _(self: web_server_handler) -> bool:
         username,
         database.player_field.IDEN_NUM,
     )
-    assert id_num is not None
+    if id_num is None:
+        # Игрока с таким именем ещё нет в БД плейса (он ни разу не заходил).
+        # Отдаём 404, а не роняем запрос assertion'ом — клиент такое умеет
+        # переваривать, а трейс в логе вебсервера — это шум.
+        self.send_error(404)
+        return True
 
-    self.send_data(id_num)
+    self.send_data(str(id_num))
     return True
 
 

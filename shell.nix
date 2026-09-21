@@ -37,6 +37,7 @@ let
     lz4
     numpy
     dracopy
+    pillow
   ]);
 in
 pkgs.mkShell {

@@ -1,7 +1,5 @@
 import re
 
-import util.const
-import assets.returns as returns
 from web_server._logic import web_server_handler, server_path
 
 
@@ -53,45 +51,6 @@ def _(self: web_server_handler) -> bool:
 @server_path('/game/validate-machine')
 def _(self: web_server_handler) -> bool:
     self.send_json({"success": True})
-    return True
-
-
-@server_path('/avatar-thumbnail/json')
-def _(self: web_server_handler) -> bool:
-    '''
-    To simplify the server program, let not there be avatar thumbnail storage.
-    '''
-    self.send_json({})
-    return True
-
-
-@server_path('/avatar-thumbnail/image')
-def _(self: web_server_handler) -> bool:
-    '''
-    To simplify the server program, let there not be avatar thumbnail images.
-    '''
-    return True
-
-
-@server_path('/asset-thumbnail/json')
-def _(self: web_server_handler) -> bool:
-    '''
-    TODO: properly deflect thumbnail generation.
-    '''
-    self.send_json({
-        'Url': f'{self.hostname}/Thumbs/GameIcon.ashx',
-        'Final': True,
-        'SubstitutionType': 0,
-    })
-    return True
-
-
-@server_path('/Thumbs/GameIcon.ashx')
-def _(self: web_server_handler) -> bool:
-    asset_cache = self.game_config.asset_cache
-    thumbnail_data = asset_cache.get_asset(util.const.THUMBNAIL_ID_CONST)
-    if isinstance(thumbnail_data, returns.ret_data):
-        self.send_data(thumbnail_data.data)
     return True
 
 

@@ -48,6 +48,40 @@ DEFAULT_COMMANDS = {'POST', 'GET'}
 ALL_VERSIONS = set(versions.rōblox)
 
 
+def parse_host_header(host_header: str) -> tuple[str, int | None] | None:
+    '''
+    Разбирает заголовок `Host` в пару (домен, порт).
+
+    Использует `urllib.parse.urlsplit` вместо наивного `rsplit(':', 1)`, чтобы
+    корректно обрабатывать:
+      - bare IPv6 в квадратных скобках (`[::1]` без порта — иначе `int('::1]')`
+        бросает ValueError и роняет запрос);
+      - Host без порта (`localhost`, `[::1]:2005`);
+      - невалидный порт.
+    Возвращает `None`, если заголовок разобрать не удалось.
+    '''
+    try:
+        authority = parse.urlsplit(f'//{host_header}')
+    except ValueError:
+        return None
+
+    domain = authority.hostname
+    if domain is None:
+        return None
+
+    try:
+        return (domain, authority.port)
+    except ValueError:
+        return None
+
+
+def format_hostname(domain: str, port: int | None) -> str:
+    host = f'[{domain}]' if ':' in domain else domain
+    if port is None:
+        return host
+    return f'{host}:{port}'
+
+
 def server_path(
     path: str,
     regex: bool = False,
@@ -175,16 +209,19 @@ class web_server_handler(http.server.BaseHTTPRequestHandler):
         if host_header is None:
             return False
 
-        domain_str, port_str = host_header.rsplit(':', 1)
-        self.port_num = int(port_str)
+        parsed_host = parse_host_header(host_header)
+        if parsed_host is None:
+            return False
+        domain_str, port_num = parsed_host
 
         if domain_str == '127.0.0.1':
             self.domain = 'localhost'
-        elif domain_str.startswith('['):
-            # Format IPv6 addresses.
-            self.domain = domain_str[1:-1]
         else:
             self.domain = domain_str
+
+        # Host может прийти без порта (например `[::1]`); тогда серверный порт —
+        # единственный надёжный источник истины.
+        self.port_num = port_num if port_num is not None else self.server.server_port
 
         self.hostname = (
             f'http{"s" if isinstance(self.server, web_server_ssl) else ""}://' +
