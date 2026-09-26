@@ -14,7 +14,11 @@ def get_rank_dict(user_id_num: int, game_config: obj_type) -> dict[str, int]:
         user_id_num,
         database.player_field.USERCODE,
     )
-    assert user_code is not None
+    if user_code is None:
+        # Неизвестный id (Studio в плейтесте спрашивает про playerid=0):
+        # у такого пользователя групп нет. Раньше здесь был assert, который
+        # рвал соединение — Studio показывала 'LuaWebService error'.
+        return {}
 
     return game_config.server_core.retrieve_groups(
         user_id_num, user_code,
@@ -33,6 +37,17 @@ def _(self: web_server_handler) -> bool:
             self.send_data(
                 b'<Value Type="integer">%d</Value>' %
                 (rank),
+            )
+            return True
+        case 'IsInGroup':
+            group_id_str = self.query['groupid']
+            user_id_num = int(self.query['playerid'])
+            rank_dict = get_rank_dict(user_id_num, self.game_config)
+            is_in = rank_dict.get(group_id_str, 0) > 0
+
+            self.send_data(
+                b'<Value Type="boolean">%s</Value>' %
+                (b'True' if is_in else b'False'),
             )
             return True
         case _:
