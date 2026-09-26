@@ -10,14 +10,8 @@ def _(self: web_server_handler) -> bool:
     return True
 
 
-@server_path('/v1/users/authenticated')
-def _(self: web_server_handler) -> bool:
-    self.send_json({
-        "id": 1,
-        "name": "ROBLOX",
-        "displayName": "ROBLOX"
-    })
-    return True
+# `/v1/users/authenticated` живёт в endpoints/studio.py: отдаёт реального
+# студийного пользователя из сессии (раньше здесь был stub "ROBLOX").
 
 
 @server_path('/my/settings/json', commands={'GET'})
