@@ -160,7 +160,7 @@ Source/routines/player/__init__.py  — RobloxPlayerBeta.exe, PlaceLauncher.ashx
 Source/routines/studio/__init__.py  — RobloxStudioBeta.exe, -localPlaceFile
 Source/routines/cookie.py           — показать .ROBLOSECURITY-куку
 Source/web_server/_logic.py         — http.server-подобие: server_path-реестр, маршрутизация
-Source/web_server/endpoints/*.py    — 17 модулей, ~114 роутов «api.roblox.com»
+Source/web_server/endpoints/*.py    — 21 модулей, ~120 роутов «api.roblox.com»
 Source/game_config/{__init__,structure}.py — GameConfig.toml: схема + парсинг (TOML/JSON)
 Source/config_type/                 — типы конфига: wrappers (uri_obj, path_str, counter), structs
 Source/assets/                      — кэш ассетов + сериализаторы (rbxl/rbxlx/mesh/csg/video/thumbnail)
@@ -187,6 +187,24 @@ TTL 30 дней, при ошибке сети — устаревший кэш). 
 элементы `assetAndAssetTypeIds` (v463, замена конечностей R15), аксессуары →
 `accessoryVersionIds` (v347). Скин читается **на каждый запрос** — смена скина
 работает вживую. Подробности — `../rbxdserver/DESIGN.md` (раздел «Скины»).
+
+**Toolbox (форковая фича!)** — локальная библиотека ассетов для Studio:
+`data/Toolbox/<Категория>/<имя>.rbxm` (+ опционально `<имя>.png` с тем же
+именем — превью). Категории — подпапки Models, Meshes, Images, AudioVideo
+(создаются сами при первом скане; посторонние подпапки тоже сканируются).
+Сканер `assets/toolbox.py` пересканирует папку на каждый запрос — без кэшей
+и лимитов, файлы можно менять на лету. id локальных ассетов — от
+`90_000_000_000_000` (14 цифр, с реальными ассетами Roblox не пересекаются),
+считается хешем от «категория/имя», так что добавление файлов не сдвигает
+id старых. Эндпойнты `web_server/endpoints/toolbox.py`:
+`/ide/toolbox/items` — формат старого веб-тулбокса `{TotalResults, Results}`
+(параметры num/page/keyword/category сняты с живого лога студии; алиасы
+FreeModels/FreeDecals/FreeAudio мапятся на папки), `/model-thumbnails` —
+png рядом или серая заглушка, `/ide/clienttoolbox` — страница тулбокса для
+встроенного браузера студии: вкладки, поиск, пагинация, вставка через
+`window.external.Insert/StartDrag` (мост, как у ревайвлов). `/asset/?id=`
+и `marketplace/productinfo` понимают локальные id: хук в
+`assets/__init__.py:get_asset` + ветка в `endpoints/marketplace.py`.
 
 Корневые файлы: `CHANGELOG.md` (апстримный), `shell.nix` (NixOS dev-shell: umu-launcher,
 wineWow64, cage, winetricks), `pyrightconfig.json` (include: `Source`), `.python-version` (3.13),
