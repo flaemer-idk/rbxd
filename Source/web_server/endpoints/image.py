@@ -20,6 +20,7 @@ import json
 import os
 import random
 import re
+import secrets
 import ssl
 import urllib.request
 from datetime import UTC, datetime
@@ -658,7 +659,13 @@ def _build_avatar_image_url(
     width: int,
     height: int,
 ) -> str:
-    return f"{self.hostname}/avatar-thumbnail/image?userId={user_id}&x={width}&y={height}"
+    # `cb` — cache-buster: URL каждый раз новый, иначе клиентский кэш
+    # (WinInet в wine-префиксе) навсегда «приклеивает» первую картинку
+    # к userId, и рандомный плейсхолдер перестаёт ротироваться.
+    return (
+        f"{self.hostname}/avatar-thumbnail/image"
+        f"?userId={user_id}&x={width}&y={height}&cb={secrets.token_hex(4)}"
+    )
 
 
 def _build_headshot_image_url(
@@ -667,7 +674,10 @@ def _build_headshot_image_url(
     width: int,
     height: int,
 ) -> str:
-    return f"{self.hostname}/headshot-thumbnail/image?userId={user_id}&x={width}&y={height}"
+    return (
+        f"{self.hostname}/headshot-thumbnail/image"
+        f"?userId={user_id}&x={width}&y={height}&cb={secrets.token_hex(4)}"
+    )
 
 
 def _build_game_icon_url(
