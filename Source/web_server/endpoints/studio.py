@@ -27,7 +27,12 @@ def _send_auth_error(
     message: str,
     status: int = 401,
 ) -> None:
-    self.send_json({'errors': [{'code': 0, 'message': message}]}, status)
+    # `errors[]` — формат современных Roblox API; `message` — плоский формат,
+    # который понимают старые парсеры Studio. Отдаём оба.
+    self.send_json({
+        'errors': [{'code': 0, 'message': message}],
+        'message': message,
+    }, status)
 
 
 def _read_json_payload(self: web_server_handler) -> dict:
@@ -83,13 +88,17 @@ def _(self: web_server_handler) -> bool:
     token = record.get('token') or users.issue_token(username)
     headers = {'Set-Cookie': util.auth.make_cookie_header(token)} if token else None
 
+    # Формат ответа POST /v2/login (auth.roblox.com): вложенный объект `user`.
+    # Плоский `{userId, username, ...}` Studio 2021E не парсит
+    # (в её логах это `StudioLogin.End.Failure.LoginParse`).
     self.send_json({
-        'membershipType': 4,
-        'username': username,
+        'user': {
+            'id': user_id,
+            'name': username,
+            'displayName': username,
+        },
+        'isBanned': False,
         'isUnder13': False,
-        'countryCode': 'US',
-        'userId': user_id,
-        'displayName': username,
     }, headers=headers)
     return True
 
@@ -113,13 +122,17 @@ def _(self: web_server_handler) -> bool:
     token = users.issue_token(username)
     headers = {'Set-Cookie': util.auth.make_cookie_header(token)} if token else None
 
+    user_id_num = util.auth.get_studio_player_identity(self)
+    user_id = user_id_num[0] if user_id_num is not None else 0
+
     self.send_json({
-        'membershipType': 4,
-        'username': username,
+        'user': {
+            'id': user_id,
+            'name': username,
+            'displayName': username,
+        },
+        'isBanned': False,
         'isUnder13': False,
-        'countryCode': 'US',
-        'userId': 0,
-        'displayName': username,
     }, headers=headers)
     return True
 
@@ -131,14 +144,24 @@ def _(self: web_server_handler) -> bool:
         _send_auth_error(self, 'You are not logged in.')
         return True
 
+    identity = util.auth.get_studio_player_identity(self)
     self.send_json(
         {
-            'id': 0,
+            # `id: 0` Studio читает как «не залогинен» — отдаём реальный id.
+            'id': identity[0] if identity is not None else 0,
             'name': record['user_code'],
             'displayName': record['user_code'],
         },
         headers=util.auth.studio_auth_headers(self),
     )
+    return True
+
+
+@server_path('/v2/logout', commands={'POST', 'GET'})
+def _(self: web_server_handler) -> bool:
+    self.send_json({}, headers={
+        'Set-Cookie': util.auth.make_clear_cookie_header(),
+    })
     return True
 
 

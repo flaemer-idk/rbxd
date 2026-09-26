@@ -354,6 +354,19 @@ def make_cookie_header(token: str) -> str:
     return _build_cookie_header(AUTH_COOKIE_NAME, token)
 
 
+def make_clear_cookie_header() -> str:
+    '''
+    Заголовок Set-Cookie, который снимает куку (для `/v2/logout`).
+    Прокидывать через `send_json(..., headers=...)` — не через send_header!
+    '''
+    return _build_cookie_header(
+        AUTH_COOKIE_NAME,
+        '',
+        max_age=0,
+        expires='Thu, 01 Jan 1970 00:00:00 GMT',
+    )
+
+
 def studio_auth_headers(
     self: web_server_logic.web_server_handler,
 ) -> dict[str, str]:
