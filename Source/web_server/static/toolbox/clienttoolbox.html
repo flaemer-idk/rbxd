@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Toolbox</title>
+<style>
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    background: #e5e5e5;
+    color: #191919;
+    font: 13px/1.4 Arial, Helvetica, sans-serif;
+    user-select: none;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    padding: 6px 8px;
+    background: #fff;
+    border-bottom: 1px solid #c3c3c3;
+  }
+  .tab {
+    padding: 4px 12px;
+    border: 1px solid #b8b8b8;
+    border-radius: 3px;
+    background: #f6f6f6;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .tab:hover { background: #ededed; }
+  .tab.active {
+    background: #00a2ff;
+    border-color: #0084d1;
+    color: #fff;
+  }
+  #searchbox { margin-left: auto; display: flex; gap: 4px; }
+  #search {
+    width: 160px;
+    padding: 4px 6px;
+    border: 1px solid #b8b8b8;
+    border-radius: 3px;
+    font: inherit;
+  }
+  button {
+    padding: 4px 10px;
+    border: 1px solid #b8b8b8;
+    border-radius: 3px;
+    background: #f6f6f6;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: #ededed; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  #grid {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+    gap: 10px;
+    align-content: start;
+  }
+  .item {
+    background: #fff;
+    border: 1px solid #c3c3c3;
+    border-radius: 3px;
+    padding: 6px;
+    text-align: center;
+    cursor: pointer;
+  }
+  .item:hover { border-color: #00a2ff; }
+  .item img {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    background: #f2f2f2;
+  }
+  .item .name {
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #status {
+    padding: 4px 10px;
+    color: #555;
+    background: #f6f6f6;
+    border-top: 1px solid #c3c3c3;
+  }
+  #pager {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    background: #f6f6f6;
+    border-top: 1px solid #c3c3c3;
+  }
+  #empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: #777;
+    padding: 30px 0;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div id="tabs"></div>
+  <div id="searchbox">
+    <input id="search" type="text" placeholder="Поиск…">
+    <button id="searchbtn">Найти</button>
+  </div>
+</header>
+<div id="grid"></div>
+<div id="pager">
+  <button id="prev">‹ Назад</button>
+  <span id="pageinfo"></span>
+  <button id="next">Вперёд ›</button>
+</div>
+<div id="status">Загрузка…</div>
+
+<script>
+'use strict';
+
+var NUM = 30;
+
+// Параметр category — то, что студия шлёт в /ide/toolbox/items
+// (в живом логе видно FreeModels).
+var CATEGORIES = [
+  ['FreeModels', 'Модели'],
+  ['Meshes', 'Меши'],
+  ['Images', 'Картинки'],
+  ['AudioVideo', 'Аудио/Видео'],
+  ['', 'Все'],
+];
+
+var state = { category: 'FreeModels', keyword: '', page: 1 };
+var totalPages = 1;
+
+function assetUrl(id) {
+  return location.origin + '/asset/?id=' + id;
+}
+
+// Вставка в плейс — через мост встроенного браузера студии
+// (тот же контракт, что у ревайвлов: window.external.Insert/StartDrag).
+function insertAsset(id) {
+  try {
+    window.external.Insert(assetUrl(id));
+  } catch (e) {
+    alert('Вставка не удалась: ' + e);
+  }
+}
+
+function startDrag(id) {
+  try {
+    window.external.StartDrag(assetUrl(id));
+  } catch (e) {
+    // Перетаскивание опционально: молча игнорируем, если моста нет.
+  }
+}
+
+function buildTabs() {
+  var tabs = document.getElementById('tabs');
+  tabs.style.display = 'flex';
+  tabs.style.gap = '6px';
+  CATEGORIES.forEach(function (pair) {
+    var el = document.createElement('div');
+    el.className = 'tab' + (state.category === pair[0] ? ' active' : '');
+    el.textContent = pair[1];
+    el.onclick = function () {
+      state.category = pair[0];
+      state.page = 1;
+      buildTabs();
+      load();
+    };
+    tabs.appendChild(el);
+  });
+}
+
+function render(data) {
+  var grid = document.getElementById('grid');
+  grid.innerHTML = '';
+
+  if (!data.Results.length) {
+    var empty = document.createElement('div');
+    empty.id = 'empty';
+    empty.textContent = 'Ничего не найдено. Положите .rbxm в data/Toolbox/<Категория>/';
+    grid.appendChild(empty);
+  }
+
+  data.Results.forEach(function (res) {
+    var id = res.Asset.Id;
+    var el = document.createElement('div');
+    el.className = 'item';
+    el.title = 'Клик — вставить, можно тащить в 3D-вид';
+    el.draggable = true;
+    el.ondragstart = function () { startDrag(id); };
+    el.onclick = function () { insertAsset(id); };
+
+    var img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = res.Thumbnail.Url;
+    img.onerror = function () { img.style.visibility = 'hidden'; };
+    el.appendChild(img);
+
+    var name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = res.Asset.Name;
+    el.appendChild(name);
+
+    grid.appendChild(el);
+  });
+
+  totalPages = Math.max(1, Math.ceil(data.TotalResults / NUM));
+  document.getElementById('pageinfo').textContent =
+    'стр. ' + state.page + ' из ' + totalPages;
+  document.getElementById('prev').disabled = state.page <= 1;
+  document.getElementById('next').disabled = state.page >= totalPages;
+  document.getElementById('status').textContent =
+    'Найдено: ' + data.TotalResults;
+}
+
+function load() {
+  var qs =
+    'num=' + NUM +
+    '&sort=Relevance' +
+    '&category=' + encodeURIComponent(state.category) +
+    '&creatorId=&groupId=0' +
+    '&keyword=' + encodeURIComponent(state.keyword) +
+    '&page=' + state.page;
+  document.getElementById('status').textContent = 'Загрузка…';
+  fetch('/ide/toolbox/items?' + qs)
+    .then(function (resp) { return resp.json(); })
+    .then(render)
+    .catch(function (e) {
+      document.getElementById('status').textContent = 'Ошибка загрузки: ' + e;
+    });
+}
+
+document.getElementById('prev').onclick = function () {
+  if (state.page > 1) { state.page--; load(); }
+};
+document.getElementById('next').onclick = function () {
+  if (state.page < totalPages) { state.page++; load(); }
+};
+document.getElementById('searchbtn').onclick = function () {
+  state.keyword = document.getElementById('search').value;
+  state.page = 1;
+  load();
+};
+document.getElementById('search').onkeydown = function (e) {
+  if (e.key === 'Enter') { document.getElementById('searchbtn').click(); }
+};
+
+buildTabs();
+load();
+</script>
+</body>
+</html>

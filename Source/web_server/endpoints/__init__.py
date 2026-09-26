@@ -19,6 +19,7 @@ from . import (
     text_filter,
     studio,
     universes,
+    toolbox,
     misc,
     fvars,
     presence,
