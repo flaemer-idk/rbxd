@@ -1,109 +1,212 @@
 # Standard library imports
 import json
+import re
 import time
 
 # Local application imports
+import util.auth
 from web_server._logic import web_server_handler, server_path
 
 
-# MOCK DATABASE
-# Replace this dictionary with your actual DB connector later.
-# Structure mirrors the SQL: SELECT * FROM `users` WHERE `name`= :username
-MOCK_DB = {
-    '67': {
-        'id': 1630228,
-        'token': '_|WARNING:-DO-NOT-SHARE-THIS.--Sharing-this-will-allow-someone-to-log-in-as-you-and-to-steal-your-ROBUX-and-items.|_CAEaAhADIhwKBGR1aWQSFDEzNjcwOTI5Mzc2NTU2MTY1NDcyKAM.tgDCk1jAKYAzEUR9d3h2ckQPulAIFNO7HYpIprVIlCp6zqRg36SbQxV7HeJe_GgjbOsGdxCRVmDvEYfXUZ-d7yv_Dy4pdhgfvxIvMWoG6XVbmMTNbsx2kt2eJCwHyZo7F1QLSt2mJUqvo_QKb5IDma7qJQdsq9nrUGhP7ee4IyjAlXFcUzs3j9SChdsoOLNJOBXl46LgyUG4fymeMpVgc0EujmNH6jScZgI8YGWeilcOrKpjzzqQq_u2JMxCW9lRh2q7mdtTtNq3i9PtFYvCh9RImwe35rzS7vu28lRUnYWhYfVd6i9mRnWat5_q3vUYYOiBgW2pQmJvSZpLHWejOKTvvAVUJggugJsA-RJvbz0bPNw-3EsOC1FlTFd73HTwZdw_npUc3rDn6uqHBMLskVUKjtjyce5XbWcJMIjE1GRTQdIK5f6qaNbLcysXZDgR-rI9p1hf2hxPJ74A1mTYB6583wwL83CNU_nO4nBUzOUsGlVEVQrhCe1W6NaL3lwsYDcg3G_PHIRqc6KsRxLVLppMxRH7VvuIPnZBUZraofZ0VqKKtL-jBfRHFbuQbkWWEKOTN3De_5wgzwH00WCx9jZdSGct9eIJSw7VmLZxKQnOXbE2Z7oSyT-pCCrnUk4_wtjMDPo7aIfXkqlsC-fzmp96_-aYjIQ5sXPfe0ALpiCRx_mreuQpjaY6DvRt-N8EPE_3r_9xRP8__6KCBfRTolvlLZG05nLGa98xprd5R228v6STUo6qKQJ_5FQzC9i10SHY_oXOzu8UTRg50FDEDd-nh-A',
-        'password': '67'  # Plain text for mock simplicity
-    }
-}
+'''
+Studio-facing web surface.
 
-# The code below was written by Qwen3.6-35B-A3B.
+Раньше здесь лежал MOCK_DB с одним захардкоженным пользователем `'67'` и
+паролем открытым текстом. Теперь auth настоящий (см. `util/auth.py`):
+пользователи живут в `data/studio-users.toml`, пароли — sha256+salt,
+кука `.ROBLOSECURITY` host-only.
+
+Прозрачный авто-логин: в studio-режиме при отсутствии куки сервер молча
+выдаёт сессию пользователя по умолчанию (`default_user` из TOML), поэтому
+диалог логина в Studio не появляется вовсе.
+'''
 
 
-@server_path('/v2/login')
-def _(self: web_server_handler) -> bool:
+def _send_auth_error(
+    self: web_server_handler,
+    message: str,
+    status: int = 401,
+) -> None:
+    self.send_json({'errors': [{'code': 0, 'message': message}]}, status)
+
+
+def _read_json_payload(self: web_server_handler) -> dict:
+    raw_content = self.read_content()
+    if not raw_content:
+        return {}
     try:
-        # 1. Parse input (JSON body or form-urlencoded)
-        raw_content = self.read_content()
-        # Safe header access depending on your framework's API
-        user_agent = getattr(self, 'headers', {}).get('User-Agent', '')
+        payload = json.loads(raw_content)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
 
-        username = password = None
-        data = json.loads(raw_content)
-        username = data.get('username', data.get('cvalue', None))
-        password = data.get('password', None)
 
-        # PHP's strip_tags equivalent
+def _extract_username(payload: dict) -> str:
+    username = (
+        payload.get('username') or
+        payload.get('Username') or
+        payload.get('cvalue') or
+        payload.get('value')
+    )
+    return str(username).strip() if username is not None else ''
 
-        if not username or not password:
-            self.send_json(
-                {'message': 'Username and password are required.'}, status=400)
-            return True
 
-        # 2. Mock Database Query
-        user_data = MOCK_DB.get(username)
+def _extract_password(payload: dict) -> str:
+    password = payload.get('password') or payload.get('Password')
+    return str(password) if password is not None else ''
 
-        if not user_data:
-            self.send_json({'message': 'Incorrect username.'}, status=403)
-            return True
 
-        # 3. Password Verification
-        # Using plain string comparison since this is a mock database.
-        if user_data.get('password') != password:
-            self.send_json(
-                {'message': 'Incorrect password. Please try again.'}, status=403)
-            return True
+@server_path('/v2/login', commands={'POST', 'GET'})
+def _(self: web_server_handler) -> bool:
+    payload = _read_json_payload(self)
+    username = _extract_username(payload)
+    password = _extract_password(payload)
 
-        # 4. Extract user data
-        roblosec = user_data['token']
-        uid = user_data['id']
-        display_name = username
+    if not username or not password:
+        _send_auth_error(self, 'Username and password are required.', 400)
+        return True
 
-        # 5. Set Cookies
-        # PHP uses: time() + (460800 * 30) seconds
-        expiry_time = time.time() + (460800 * 30)
+    users = util.auth.get_users()
+    record = users.get_by_username(username)
 
-        # 6. Return JSON
-        self.send_json({
-            'membershipType': 4,
-            'username': display_name,
-            'isUnder13': False,
-            'countryCode': "US",
-            'userId': uid,
-            'displayName': display_name
-        }, headers={
-            'Set-Cookie': f'.ROBLOSECURITY={roblosec}',
-        })
-
-    except Exception:
+    if record is None or not users.verify_password(record, password):
         self.send_response(401)
+        util.auth.clear_auth_cookie(self)
+        _send_auth_error(self, 'Incorrect username or password.', status=None)
+        return True
+
+    identity = util.auth.get_studio_player_identity(self)
+    user_id = identity[0] if identity is not None else 0
+
+    token = record.get('token') or users.issue_token(username)
+    headers = {'Set-Cookie': util.auth.make_cookie_header(token)} if token else None
+
+    self.send_json({
+        'membershipType': 4,
+        'username': username,
+        'isUnder13': False,
+        'countryCode': 'US',
+        'userId': user_id,
+        'displayName': username,
+    }, headers=headers)
     return True
 
 
-@server_path('/Users/1630228')
+@server_path('/v2/signup', commands={'POST', 'GET'})
+def _(self: web_server_handler) -> bool:
+    payload = _read_json_payload(self)
+    username = _extract_username(payload)
+    password = _extract_password(payload)
+
+    if not username or not password:
+        _send_auth_error(self, 'Username and password are required.', 400)
+        return True
+
+    users = util.auth.get_users()
+    record = users.add_user(username, password)
+    if record is None:
+        _send_auth_error(self, 'Username is already in use.', 409)
+        return True
+
+    token = users.issue_token(username)
+    headers = {'Set-Cookie': util.auth.make_cookie_header(token)} if token else None
+
+    self.send_json({
+        'membershipType': 4,
+        'username': username,
+        'isUnder13': False,
+        'countryCode': 'US',
+        'userId': 0,
+        'displayName': username,
+    }, headers=headers)
+    return True
+
+
+@server_path('/v1/users/authenticated')
+def _(self: web_server_handler) -> bool:
+    record = util.auth.get_current_studio_user(self)
+    if record is None:
+        _send_auth_error(self, 'You are not logged in.')
+        return True
+
+    self.send_json(
+        {
+            'id': 0,
+            'name': record['user_code'],
+            'displayName': record['user_code'],
+        },
+        headers=util.auth.studio_auth_headers(self),
+    )
+    return True
+
+
 @server_path('/game/GetCurrentUser.ashx')
 def _(self: web_server_handler) -> bool:
-    time.sleep(2)  # HACK: Studio 2021E probably won't work without it.
-    self.send_json(1630228)
+    # HACK: Studio 2021E, по всей видимости, не работает без этой задержки
+    # (наследие мока — оставлено, чтобы не сломать рабочее поведение).
+    time.sleep(2)
+
+    identity = util.auth.get_studio_player_identity(self)
+    self.send_json(
+        identity[0] if identity is not None else 0,
+        headers=util.auth.studio_auth_headers(self),
+    )
+    return True
+
+
+@server_path(r'/Users/(\d+)', regex=True)
+def _(self: web_server_handler, match: re.Match[str]) -> bool:
+    # Раньше был статический `/Users/1630228` с захардкоженным id.
+    # Отдаём тот жеbare id, что и раньше (Studio 2021E ожидает именно число),
+    # но берем его из сессии, а не из константы.
+    requested_id = int(match[1])
+    identity = util.auth.get_studio_player_identity(self)
+    auth_headers = util.auth.studio_auth_headers(self)
+
+    # Чужой id: отдаём как есть — это может быть запрос об игроке плейса.
+    # Свой id — тоже число (Studio 2021E ожидает именно число, не JSON-модель).
+    self.send_json(requested_id, headers=auth_headers)
     return True
 
 
 @server_path('/users/account-info')
 def _(self: web_server_handler) -> bool:
+    # Студийный путь: сессия есть → отдаём реальные поля.
+    identity = util.auth.get_studio_player_identity(self)
+    if identity is not None:
+        (user_id_num, username) = identity
+        funds = self.server.storage.funds.check(user_id_num) or 0
+
+        self.send_json({
+            'UserId': user_id_num,
+            'Username': username,
+            'DisplayName': username,
+            'HasPasswordSet': True,
+            'Email': {'Value': 'n**@roblox.com', 'IsVerified': True},
+            'AgeBracket': 0,
+            'Roles': ['BetaTester', 'Beta17', 'Soothsayer'],
+            'MembershipType': 0,
+            'RobuxBalance': funds,
+            'NotificationCount': 0,
+            'EmailNotificationEnabled': False,
+            'PasswordNotificationEnabled': False,
+            'CountryCode': 'RU',
+        }, headers=util.auth.studio_auth_headers(self))
+        return True
+
+    # Игровой путь (RCC-режим): userId приходит из `Roblox-Session-Id`.
+    try:
+        user_id_num = json.loads(self.headers['Roblox-Session-Id'])['UserId']
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return True
+
+    funds = self.server.storage.funds.check(user_id_num) or 0
     self.send_json({
-        "UserId": 1630228,
-        "Username": '67',
-        "DisplayName": '67',
-        "HasPasswordSet": True,
-        "Email": {"Value": 'n**@roblox.com', "IsVerified": True},
-        "AgeBracket": 0,
-        "Roles": ['BetaTester', 'Beta17', 'Roblox.Slack.Models.Contractor.Name', 'Soothsayer'],
-        "MembershipType": 0,
-        "RobuxBalance": 98763,
-        "NotificationCount": 223,
-        "EmailNotificationEnabled": False,
-        "PasswordNotificationEnabled": False,
-        "CountryCode": 'RU',
+        'Roles': ['Soothsayer', 'BetaTester'],
+        'UserId': user_id_num,
+        'RobuxBalance': funds,
     })
     return True
 
@@ -120,17 +223,19 @@ def _(self: web_server_handler) -> bool:
     return True
 
 
-@server_path('/users/account-info')
+@server_path('/login/forgotPasswordOrUsername/')
 def _(self: web_server_handler) -> bool:
-    try:
-        user_id_num = json.loads(self.headers['Roblox-Session-Id'])['UserId']
-    except TypeError:
-        return True
+    # Studio ссылается на эту страницу из диалога логина; локально
+    # восстановление пароля не предусмотрено (файл правится руками).
+    self.send_data(
+        b'<html><body><h1>Password reset is not available.</h1>'
+        b'<p>Edit data/studio-users.toml on the server.</p></body></html>',
+        headers={'content_type': 'text/html; charset=utf-8'},
+    )
+    return True
 
-    funds = self.server.storage.funds.check(user_id_num) or 0
-    self.send_json({
-        "Roles": ["Soothsayer", "BetaTester"],
-        "UserId": user_id_num,
-        "RobuxBalance": funds,
-    })
+
+@server_path('/login/return-to-studio')
+def _(self: web_server_handler) -> bool:
+    self.send_redirect('/')
     return True
