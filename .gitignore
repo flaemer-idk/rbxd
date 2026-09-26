@@ -211,3 +211,10 @@ poetry.toml
 .ruff_cache/
 
 # End of https://www.toptal.com/developers/gitignore/api/python
+
+# Тестовые рендеры (см. tests/render_*_test.py)
+tests/*.png
+tests/__pycache__/
+.wine-rfd/
+.rcc_*.log
+.mercury_*.log

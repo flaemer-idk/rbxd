@@ -14,11 +14,11 @@
 # batch-API, безопасный guess content-type, плейсхолдеры.
 
 import gzip
-import functools
 import hashlib
 import io
 import json
 import os
+import random
 import re
 import ssl
 import urllib.request
@@ -29,7 +29,6 @@ import assets.const
 import assets.returns as returns
 import util.const
 from web_server._logic import server_path, web_server_handler
-from web_server.endpoints import skin_render
 
 
 DEFAULT_IMAGE_SIZES = [36, 48, 50, 60, 75, 100, 128, 150, 180, 200, 256, 324, 352, 396, 420, 480, 500, 512, 576, 640, 700, 720, 768, 1280]
@@ -40,10 +39,30 @@ BATCH_ALLOWED_TYPES = {"Avatar", "AvatarHeadShot", "GameIcon", "GameThumbnail", 
 MAX_BATCH_REQUESTS = 15
 MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
 IMAGE_CACHE_DIR_NAME = "ImageCache"
+
 GAME_ICON_PLACEHOLDER_REL_PATH = "img/placeholder/icon_one.png"
 GAME_BANNER_PLACEHOLDER_REL_PATH = "img/placeholder/icon_two.png"
-USER_AVATAR_PLACEHOLDER_REL_PATH = "img/placeholder/avatar_placeholder.png"
-USER_HEADSHOT_PLACEHOLDER_REL_PATH = "img/placeholder/headshot_placeholder.png"
+# Физически лежит в web_server/static/ContentDeleted.png — это не плейсхолдер
+# юзера, а отдельная заглушка «контент удалён», поэтому и живёт отдельно.
+CONTENT_DELETED_PLACEHOLDER_REL_PATH = "ContentDeleted.png"
+
+# Плейсхолдеры юзеров — это папки с произвольным набором картинок:
+#   img/placeholder/avatar_placeholder/<любое имя>.png
+#   img/placeholder/headshot_placeholder/<любое имя>.png
+# Имена файлов могут быть любыми (image.png, anapa2007.png, …) — при каждом
+# запросе из папки случайно выбирается одна картинка. Содержимое папки
+# читается с диска заново на каждый запрос, поэтому картинки можно
+# добавлять, удалять и заменять на лету — без рестарта сервера.
+USER_AVATAR_PLACEHOLDER_DIR = "img/placeholder/avatar_placeholder"
+USER_HEADSHOT_PLACEHOLDER_DIR = "img/placeholder/headshot_placeholder"
+USER_PLACEHOLDER_EXTENSIONS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff",
+)
+
+# Плейсхолдеры никогда не кэшируются (ни в памяти процесса, ни на клиенте):
+# их могут удалить/переместить/заменить в любой момент, и ответ должен
+# отражать текущее состояние диска, а не то, что было прочитано первым.
+PLACEHOLDER_CACHE_CONTROL = "no-store"
 
 
 def _get_header(self: web_server_handler, name: str) -> str | None:
@@ -82,10 +101,85 @@ def _static_file_path(relative_path: str) -> str:
     return os.path.join(_static_root(), *relative_path.replace("\\", "/").split("/"))
 
 
-@functools.cache
-def _read_static_file(relative_path: str) -> bytes:
-    with open(_static_file_path(relative_path), "rb") as file_obj:
-        return file_obj.read()
+def _resolve_user_placeholder_rel_path(headshot: bool) -> str | None:
+    '''
+    Случайный плейсхолдер юзера: любой файл-картинка из папки
+    avatar_placeholder/ или headshot_placeholder/. Выдаётся случайно при
+    каждом вызове, без привязки к userId — перезаход даёт новую картинку.
+
+    Папка сканируется заново при каждом вызове (никакого кэша!), поэтому
+    файлы можно добавлять, удалять и переименовывать на лету.
+
+    Возвращает None, если папки нет или в ней нет ни одной картинки — тогда
+    caller откатывается на ContentDeleted.png, а если и его нет — на 404.
+    '''
+    directory_rel = (
+        USER_HEADSHOT_PLACEHOLDER_DIR if headshot
+        else USER_AVATAR_PLACEHOLDER_DIR
+    )
+    directory_path = _static_file_path(directory_rel)
+    if not os.path.isdir(directory_path):
+        return None
+    try:
+        entries = sorted(os.listdir(directory_path))
+    except OSError:
+        return None
+    available = [
+        f"{directory_rel}/{name}"
+        for name in entries
+        if name.lower().endswith(USER_PLACEHOLDER_EXTENSIONS)
+        and os.path.isfile(os.path.join(directory_path, name))
+    ]
+    if not available:
+        return None
+    return random.choice(available)
+
+
+def _send_user_placeholder(
+    self: web_server_handler,
+    headshot: bool,
+    target_width: int | None = None,
+    target_height: int | None = None,
+    *,
+    cache_control: str = PLACEHOLDER_CACHE_CONTROL,
+) -> bool:
+    '''
+    Отдаёт случайный плейсхолдер юзера. Цепочка fallback:
+      1. любая картинка из avatar_placeholder/ / headshot_placeholder/ (рандом)
+      2. ContentDeleted.png
+      3. 404 — главное, чтобы сервер не упал.
+    '''
+    rel_path = _resolve_user_placeholder_rel_path(headshot)
+    if rel_path is None and os.path.isfile(
+        _static_file_path(CONTENT_DELETED_PLACEHOLDER_REL_PATH)
+    ):
+        rel_path = CONTENT_DELETED_PLACEHOLDER_REL_PATH
+    if rel_path is None:
+        # Нет вообще ничего — клиент покажет пустую иконку, но сервер
+        # продолжит работать.
+        self.send_error(404)
+        return True
+    return _send_placeholder_image(
+        self,
+        rel_path,
+        target_width,
+        target_height,
+        cache_control=cache_control,
+    )
+
+
+def _read_static_file(relative_path: str) -> bytes | None:
+    # Намеренно БЕЗ functools.cache: кэш на процесс пережил бы удаление и
+    # перемещение файлов (именно так получалось «удалил плейсхолдеры, а они
+    # всё равно отдаются»). Читаем с диска при каждом обращении — плейсхолдеры
+    # маленькие, а сервер локальный, так что это дёшево. Если файла нет
+    # (например, его стёрли между isfile и open) — возвращаем None, чтобы
+    # caller откатился на fallback, а не ронял запрос.
+    try:
+        with open(_static_file_path(relative_path), "rb") as file_obj:
+            return file_obj.read()
+    except OSError:
+        return None
 
 
 def _build_static_url(self: web_server_handler, relative_path: str) -> str:
@@ -173,17 +267,6 @@ def _load_original_image(
         if not _is_image_data(cached_image):
             return None
         return cached_image
-
-    # Картинка могла быть отрендерена из скина, но ещё не записана в кэш.
-    # content_hash — это sha256 от скина; пробуем отрендерить по нему.
-    rendered = skin_render.render_cached_image(
-        self.game_config,
-        content_hash,
-    )
-    if rendered is not None and _is_image_data(rendered):
-        _write_cached_image(self, "originals", content_hash, rendered)
-        return rendered
-
     # Иконка плейса: её хэш — sha256 от байтов из AssetCache (см.
     # _get_place_icon_hash). Пробуем достать напрямую из кэша плейса.
     place_icon = _load_place_icon_bytes(self, content_hash)
@@ -297,9 +380,14 @@ def _send_placeholder_image(
     target_width: int | None = None,
     target_height: int | None = None,
     *,
-    cache_control: str = "max-age=120",
+    cache_control: str = PLACEHOLDER_CACHE_CONTROL,
 ) -> bool:
     placeholder_bytes = _read_static_file(relative_path)
+    if placeholder_bytes is None:
+        # Файл удалили/переместили, пока его выбирали. Падать нельзя —
+        # отдаём 404, клиент покажет пустую иконку.
+        self.send_error(404)
+        return True
     content_type = _guess_image_content_type(placeholder_bytes)
     if target_width is not None and target_height is not None:
         placeholder_bytes, content_type, _resized = _resize_image_bytes(
@@ -393,12 +481,14 @@ def handle_image_resize(
     )
     if resized_image is None:
         if placeholder_path is not None:
+            # Плейсхолдер всегда отдаётся без кэша — какой бы cache_control
+            # ни просили для настоящей картинки.
             return _send_placeholder_image(
                 self,
                 placeholder_path,
                 target_width,
                 target_height,
-                cache_control=cache_control,
+                cache_control=PLACEHOLDER_CACHE_CONTROL,
             )
         self.send_error(404)
         return True
@@ -430,7 +520,7 @@ def _send_stored_image(
                 placeholder_path,
                 target_width,
                 target_height,
-                cache_control=cache_control,
+                cache_control=PLACEHOLDER_CACHE_CONTROL,
             )
         self.send_error(404)
         return True
@@ -452,7 +542,7 @@ def _send_stored_image(
             return _send_placeholder_image(
                 self,
                 placeholder_path,
-                cache_control=cache_control,
+                cache_control=PLACEHOLDER_CACHE_CONTROL,
             )
         self.send_error(404)
         return True
@@ -544,22 +634,6 @@ def _user_exists(self: web_server_handler, user_id: int) -> bool:
     return True
 
 
-def _get_user_thumbnail_hash(
-    self: web_server_handler,
-    user_id: int,
-    *,
-    headshot: bool,
-) -> str | None:
-    # Рендерим иконку из скина игрока (web_server/endpoints/skin_render.py):
-    # силуэт тела в цветах скина + плашки с названиями ассетов.
-    # Возвращает None, если Pillow не установлен — тогда отдаём placeholder.
-    return skin_render.skin_image_cache_key(
-        user_id,
-        self.game_config,
-        headshot=headshot,
-    )
-
-
 def _get_place_icon_hash(
     self: web_server_handler,
     target_id: int,
@@ -635,9 +709,15 @@ def _build_placeholder_batch_url(
     height: int,
 ) -> str:
     if request_type == "Avatar":
-        return _build_static_url(self, USER_AVATAR_PLACEHOLDER_REL_PATH)
+        rel_path = _resolve_user_placeholder_rel_path(headshot=False)
+        if rel_path is not None:
+            return _build_static_url(self, rel_path)
+        return _build_static_url(self, CONTENT_DELETED_PLACEHOLDER_REL_PATH)
     if request_type == "AvatarHeadShot":
-        return _build_static_url(self, USER_HEADSHOT_PLACEHOLDER_REL_PATH)
+        rel_path = _resolve_user_placeholder_rel_path(headshot=True)
+        if rel_path is not None:
+            return _build_static_url(self, rel_path)
+        return _build_static_url(self, CONTENT_DELETED_PLACEHOLDER_REL_PATH)
     if request_type == "GameIcon":
         return _build_game_icon_url(self, None, width, height)
     return _build_static_url(self, GAME_BANNER_PLACEHOLDER_REL_PATH)
@@ -666,8 +746,6 @@ def serve_cdn_image(self: web_server_handler, match: re.Match[str]) -> bool:
 @server_path("/Thumbs/Avatar.ashx", commands={"GET"})
 @server_path("/thumbs/avatar.ashx", commands={"GET"})
 def avatar_thumbnail_image(self: web_server_handler) -> bool:
-    user_id = _resolve_user_id(self)
-
     size_pair = handle_resolution_check(
         self,
         width_parameters_name=["x", "width"],
@@ -681,24 +759,30 @@ def avatar_thumbnail_image(self: web_server_handler) -> bool:
         return True
 
     target_width, target_height = size_pair
-    content_hash = None
-    if user_id is not None and _user_exists(self, user_id):
-        content_hash = _get_user_thumbnail_hash(self, user_id, headshot=False)
-
-    return _send_stored_image(
+    return _send_user_placeholder(
         self,
-        content_hash,
-        target_width,
-        target_height,
-        placeholder_path=USER_AVATAR_PLACEHOLDER_REL_PATH,
+        headshot=False,
+        target_width=target_width,
+        target_height=target_height,
     )
 
 
+@server_path("/headshot-thumbnail/json", commands={"GET"})
 @server_path("/avatar-thumbnail/json", commands={"GET"})
 def avatar_thumbnail_json(self: web_server_handler) -> bool:
     user_id = _resolve_user_id(self)
+    rel_path = _resolve_user_placeholder_rel_path(headshot=False)
+    if rel_path is None and os.path.isfile(
+        _static_file_path(CONTENT_DELETED_PLACEHOLDER_REL_PATH)
+    ):
+        rel_path = CONTENT_DELETED_PLACEHOLDER_REL_PATH
+    fallback_url = (
+        _build_static_url(self, rel_path)
+        if rel_path is not None
+        else f"{self.hostname}/avatar-placeholder"
+    )
     if user_id is None:
-        self.send_json({"Final": True, "Url": _build_static_url(self, USER_AVATAR_PLACEHOLDER_REL_PATH)})
+        self.send_json({"Final": True, "Url": fallback_url})
         return True
 
     size_pair = handle_resolution_check(
@@ -719,6 +803,36 @@ def avatar_thumbnail_json(self: web_server_handler) -> bool:
         "Url": _build_avatar_image_url(self, user_id, target_width, target_height),
     })
     return True
+
+
+@server_path("/avatar-placeholder", commands={"GET"})
+@server_path("/headshot-placeholder", commands={"GET"})
+def user_placeholder_image(self: web_server_handler) -> bool:
+    '''
+    Прямая отдача плейсхолдера юзера (без userId). Используется как
+    fallback в JSON-ответах, когда настоящих картинок нет.
+    '''
+    headshot = self.path.startswith("/headshot")
+    size_pair = None
+    if "x" in self.query or "width" in self.query:
+        size_pair = handle_resolution_check(
+            self,
+            width_parameters_name=["x", "width"],
+            height_parameters_name=["y", "height"],
+            allowed_widths=SQUARE_IMAGE_SIZES,
+            allowed_heights=SQUARE_IMAGE_SIZES,
+            must_be_square=True,
+            can_round_to_nearest=True,
+        )
+    if size_pair is None:
+        return _send_user_placeholder(self, headshot=headshot)
+    target_width, target_height = size_pair
+    return _send_user_placeholder(
+        self,
+        headshot=headshot,
+        target_width=target_width,
+        target_height=target_height,
+    )
 
 
 @server_path("/Thumbs/GameIcon.ashx", commands={"GET"})
@@ -1133,7 +1247,7 @@ def headshot_thumbnail_image(self: web_server_handler) -> bool:
         return True
 
     try:
-        user_id_num = int(user_id)
+        _user_id_num = int(user_id)
     except ValueError:
         self.send_error(400)
         return True
@@ -1151,16 +1265,11 @@ def headshot_thumbnail_image(self: web_server_handler) -> bool:
         return True
 
     target_width, target_height = size_pair
-    content_hash = None
-    if _user_exists(self, user_id_num):
-        content_hash = _get_user_thumbnail_hash(self, user_id_num, headshot=True)
-
-    return _send_stored_image(
+    return _send_user_placeholder(
         self,
-        content_hash,
-        target_width,
-        target_height,
-        placeholder_path=USER_HEADSHOT_PLACEHOLDER_REL_PATH,
+        headshot=True,
+        target_width=target_width,
+        target_height=target_height,
     )
 
 

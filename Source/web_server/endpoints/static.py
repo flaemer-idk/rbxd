@@ -23,7 +23,13 @@ def _serve_static(self: web_server_handler, requested_path: str) -> bool:
         content = fp.read()
 
     content_type = mimetypes.guess_type(str(full_path))[0] or "application/octet-stream"
-    self.send_data(content, headers={"Content-Type": content_type})
+    headers = {"Content-Type": content_type}
+    # Плейсхолдеры (img/placeholder/…) клиент не кэширует никогда: их могут
+    # удалить, переместить или заменить в любой момент, и каждый запрос
+    # должен идти на сервер за актуальным файлом.
+    if "img/placeholder/" in safe_relative.as_posix():
+        headers["Cache-Control"] = "no-store"
+    self.send_data(content, headers=headers)
     return True
 
 
