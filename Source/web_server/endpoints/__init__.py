@@ -18,6 +18,7 @@ from . import (
     static,
     text_filter,
     studio,
+    universes,
     misc,
     fvars,
     presence,
