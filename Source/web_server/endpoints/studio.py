@@ -1,7 +1,7 @@
 # Standard library imports
 import json
 import re
-import time
+import urllib.parse
 
 # Local application imports
 import util.auth
@@ -167,9 +167,36 @@ def _(self: web_server_handler) -> bool:
 
 @server_path('/game/GetCurrentUser.ashx')
 def _(self: web_server_handler) -> bool:
-    # HACK: Studio 2021E, по всей видимости, не работает без этой задержки
-    # (наследие мока — оставлено, чтобы не сломать рабочее поведение).
-    time.sleep(2)
+    # Старый студийный flow (2016-2018): `/login/RequestAuth.ashx` возвращает
+    # URL этого эндпойнта, и Studio POST-ит учётку прямо сюда (контракт
+    # Epic.VIP). Успех = 200 + числовой id + кука `.ROBLOSECURITY`.
+    if self.command == 'POST':
+        raw_content = self.read_content()
+        try:
+            payload = json.loads(raw_content)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = dict(urllib.parse.parse_qsl(
+                raw_content.decode('utf-8', errors='replace'),
+            ))
+        if not isinstance(payload, dict):
+            payload = {}
+
+        username = _extract_username(payload)
+        password = _extract_password(payload)
+        users = util.auth.get_users()
+        record = users.get_by_username(username)
+        if not username or record is None or not users.verify_password(record, password):
+            _send_auth_error(self, 'Incorrect username or password.', 401)
+            return True
+
+        token = record.get('token') or users.issue_token(username)
+        identity = util.auth.get_studio_player_identity(self)
+        headers = {'Set-Cookie': util.auth.make_cookie_header(token)} if token else None
+        self.send_json(
+            identity[0] if identity is not None else 0,
+            headers=headers,
+        )
+        return True
 
     identity = util.auth.get_studio_player_identity(self)
     self.send_json(
@@ -242,7 +269,9 @@ def _(self: web_server_handler) -> bool:
 
 @server_path('/login/RequestAuth.ashx')
 def _(self: web_server_handler) -> bool:
-    self.send_data(self.hostname + '/login/negotiate.ashx')
+    # Старый студийный flow: ответ — URL, на который Studio шлёт учётку
+    # (контракт Epic.VIP: GetCurrentUser.ashx, НЕ negotiate).
+    self.send_data(self.hostname + '/game/GetCurrentUser.ashx')
     return True
 
 

@@ -1,5 +1,6 @@
 import re
 
+import util.auth
 import util.versions as versions
 from web_server._logic import web_server_handler, server_path
 
@@ -16,6 +17,50 @@ def _(self: web_server_handler) -> bool:
 
 @server_path('/my/settings/json', commands={'GET'})
 def _(self: web_server_handler) -> bool:
+    # Studio 2016-2021 спрашивает настройки при старте и после логина;
+    # пустой `{}` она читает как «не залогинен» (контракт rblxDOTLocal:
+    # объект с UserId/Name/клубами). В игровом режиме поведение прежнее.
+    if util.auth.is_studio_mode(self):
+        identity = util.auth.get_studio_player_identity(self)
+        if identity is not None:
+            (user_id_num, username) = identity
+            self.send_json({
+                'PreviousUserNames': '',
+                'UserId': user_id_num,
+                'Name': username,
+                'UseSuperSafePrivacyMode': False,
+                'IsSuperSafeModeEnabledForPrivacySetting': False,
+                'UseSuperSafeChat': False,
+                'IsAppChatSettingEnabled': True,
+                'IsGameChatSettingEnabled': True,
+                'IsAccountPrivacySettingsV2Enabled': True,
+                'IsSetPasswordNotificationEnabled': False,
+                'ChangePasswordRequiresTwoStepVerification': False,
+                'ChangeEmailRequiresTwoStepVerification': False,
+                'UserEmail': 'n**@roblox.com',
+                'IsEmailOnFile': True,
+                'UserEmailMasked': True,
+                'IsEmailVerified': True,
+                'UserEmailVerified': True,
+                'CanHideInventory': False,
+                'CanTrade': True,
+                'MissingParentEmail': False,
+                'IsUserConnectedToFacebook': False,
+                'IsTwoStepToggleEnabled': True,
+                'AgeBracket': 0,
+                'UserAbove13': True,
+                'AccountAgeInDays': 0,
+                'IsOBC': False,
+                'IsTBC': False,
+                'IsAnyBC': False,
+                'IsPremium': False,
+                'IsBcRenewalMembership': False,
+                'IsAccountPinEnabled': False,
+                'RobuxBalance': self.server.storage.funds.check(user_id_num) or 0,
+                'AnyEconomyAccountPresent': True,
+                'AreGamesAllowed': True,
+            }, headers=util.auth.studio_auth_headers(self))
+            return True
     self.send_json({})
     return True
 

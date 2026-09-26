@@ -47,10 +47,10 @@ TOKEN_NUM_BYTES = 36
 STUDIO_AUTOLOGIN_ATTR = '_studio_autologin_token'
 
 # Кука host-only: не указываем Domain, чтобы она не уходила на настоящий roblox.com.
+# Атрибуты минимальны (только Path): стеки Qt/WinINet старых студий (2018) могут
+# отбрасывать куку с незнакомыми атрибутами вроде SameSite.
 COOKIE_HEADER_ATTRIBUTES = {
     'path': '/',
-    'httponly': True,
-    'samesite': 'Lax',
 }
 
 
