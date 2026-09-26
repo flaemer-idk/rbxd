@@ -59,7 +59,7 @@ def _(self: web_server_handler) -> bool:
                 'RobuxBalance': self.server.storage.funds.check(user_id_num) or 0,
                 'AnyEconomyAccountPresent': True,
                 'AreGamesAllowed': True,
-            }, headers=util.auth.studio_auth_headers(self))
+            })
             return True
     self.send_json({})
     return True

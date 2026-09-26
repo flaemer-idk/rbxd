@@ -49,6 +49,17 @@ class obj_type[**P, R]:
         result = self._func(*args, *kwargs.values())
         return self.caster_func(result)
 
+    def call_with_tick(self) -> R:
+        '''
+        Для хуков без явных аргументов (например, `retrieve_default_user_code`):
+        встроенная реализация принимает `tick`, пользовательская может быть
+        без него. Пробуем оба формата. В lua-режиме лишний аргумент безвреден.
+        '''
+        try:
+            return self.__call__(time.time())
+        except TypeError:
+            return self.__call__()
+
     def cached_call(self, dur: float, key: Hashable, *args: P.args, **kwargs: P.kwargs) -> R:
         '''
         Wrapper function which caches the result of `__call__` for `dur` seconds.

@@ -1,7 +1,6 @@
 # Standard library imports
 import json
 import re
-import urllib.parse
 
 # Local application imports
 import util.auth
@@ -11,14 +10,11 @@ from web_server._logic import web_server_handler, server_path
 '''
 Studio-facing web surface.
 
-Раньше здесь лежал MOCK_DB с одним захардкоженным пользователем `'67'` и
-паролем открытым текстом. Теперь auth настоящий (см. `util/auth.py`):
-пользователи живут в `data/studio-users.toml`, пароли — sha256+salt,
-кука `.ROBLOSECURITY` host-only.
-
-Прозрачный авто-логин: в studio-режиме при отсутствии куки сервер молча
-выдаёт сессию пользователя по умолчанию (`default_user` из TOML), поэтому
-диалог логина в Studio не появляется вовсе.
+Аутентификации нет: личность Studio задаётся флагом `-u`/`--user_code`
+(см. `util/auth.py`). Эндпойнты логина оставлены, потому что Studio
+обращается к ним сама, но любая учётка просто отображается на
+пользователя из `-u`. Прозрачный «автологин» — это само отсутствие
+авторизации: все identity-эндпойнты отвечают личностью без всяких кук.
 '''
 
 
@@ -35,62 +31,22 @@ def _send_auth_error(
     }, status)
 
 
-def _read_json_payload(self: web_server_handler) -> dict:
-    raw_content = self.read_content()
-    if not raw_content:
-        return {}
-    try:
-        payload = json.loads(raw_content)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return payload
-
-
-def _extract_username(payload: dict) -> str:
-    username = (
-        payload.get('username') or
-        payload.get('Username') or
-        payload.get('cvalue') or
-        payload.get('value')
-    )
-    return str(username).strip() if username is not None else ''
-
-
-def _extract_password(payload: dict) -> str:
-    password = payload.get('password') or payload.get('Password')
-    return str(password) if password is not None else ''
-
-
-@server_path('/v2/login', commands={'POST', 'GET'})
-def _(self: web_server_handler) -> bool:
-    payload = _read_json_payload(self)
-    username = _extract_username(payload)
-    password = _extract_password(payload)
-
-    if not username or not password:
-        _send_auth_error(self, 'Username and password are required.', 400)
-        return True
-
-    users = util.auth.get_users()
-    record = users.get_by_username(username)
-
-    if record is None or not users.verify_password(record, password):
-        self.send_response(401)
-        util.auth.clear_auth_cookie(self)
-        _send_auth_error(self, 'Incorrect username or password.', status=None)
-        return True
-
+def _send_login_success(self: web_server_handler) -> None:
+    '''
+    Успешный логин/сигнап: вложенный объект `user` (формат POST /v2/login
+    auth.roblox.com). Плоский `{userId, username, ...}` Studio 2021E не
+    парсит — в её логах это `StudioLogin.End.Failure.LoginParse`.
+    '''
+    record = util.auth.get_current_studio_user(self)
     identity = util.auth.get_studio_player_identity(self)
-    user_id = identity[0] if identity is not None else 0
+    if identity is not None:
+        (user_id, username) = identity
+    elif record is not None:
+        # user_code не разрешён конфигом плейса — личность не создалась.
+        (user_id, username) = (0, record['user_code'])
+    else:
+        (user_id, username) = (0, '')
 
-    token = record.get('token') or users.issue_token(username)
-    headers = {'Set-Cookie': util.auth.make_cookie_header(token)} if token else None
-
-    # Формат ответа POST /v2/login (auth.roblox.com): вложенный объект `user`.
-    # Плоский `{userId, username, ...}` Studio 2021E не парсит
-    # (в её логах это `StudioLogin.End.Failure.LoginParse`).
     self.send_json({
         'user': {
             'id': user_id,
@@ -99,69 +55,44 @@ def _(self: web_server_handler) -> bool:
         },
         'isBanned': False,
         'isUnder13': False,
-    }, headers=headers)
+    })
+
+
+@server_path('/v2/login', commands={'POST', 'GET'})
+def _(self: web_server_handler) -> bool:
+    # Пароли не проверяем: пользователь один — из `-u`. Любая учётка
+    # из диалога логина Studio отображается на него.
+    _send_login_success(self)
     return True
 
 
 @server_path('/v2/signup', commands={'POST', 'GET'})
 def _(self: web_server_handler) -> bool:
-    payload = _read_json_payload(self)
-    username = _extract_username(payload)
-    password = _extract_password(payload)
-
-    if not username or not password:
-        _send_auth_error(self, 'Username and password are required.', 400)
-        return True
-
-    users = util.auth.get_users()
-    record = users.add_user(username, password)
-    if record is None:
-        _send_auth_error(self, 'Username is already in use.', 409)
-        return True
-
-    token = users.issue_token(username)
-    headers = {'Set-Cookie': util.auth.make_cookie_header(token)} if token else None
-
-    user_id_num = util.auth.get_studio_player_identity(self)
-    user_id = user_id_num[0] if user_id_num is not None else 0
-
-    self.send_json({
-        'user': {
-            'id': user_id,
-            'name': username,
-            'displayName': username,
-        },
-        'isBanned': False,
-        'isUnder13': False,
-    }, headers=headers)
+    # Регистрация не нужна (пользователь задаётся флагом); отвечаем как
+    # при логине, чтобы диалог Studio не падал.
+    _send_login_success(self)
     return True
 
 
 @server_path('/v1/users/authenticated')
 def _(self: web_server_handler) -> bool:
-    record = util.auth.get_current_studio_user(self)
-    if record is None:
+    identity = util.auth.get_studio_player_identity(self)
+    if identity is None:
         _send_auth_error(self, 'You are not logged in.')
         return True
 
-    identity = util.auth.get_studio_player_identity(self)
-    self.send_json(
-        {
-            # `id: 0` Studio читает как «не залогинен» — отдаём реальный id.
-            'id': identity[0] if identity is not None else 0,
-            'name': record['user_code'],
-            'displayName': record['user_code'],
-        },
-        headers=util.auth.studio_auth_headers(self),
-    )
+    self.send_json({
+        # `id: 0` Studio читает как «не залогинен» — отдаём реальный id.
+        'id': identity[0],
+        'name': identity[1],
+        'displayName': identity[1],
+    })
     return True
 
 
 @server_path('/v2/logout', commands={'POST', 'GET'})
 def _(self: web_server_handler) -> bool:
-    self.send_json({}, headers={
-        'Set-Cookie': util.auth.make_clear_cookie_header(),
-    })
+    self.send_json({})
     return True
 
 
@@ -169,55 +100,17 @@ def _(self: web_server_handler) -> bool:
 def _(self: web_server_handler) -> bool:
     # Старый студийный flow (2016-2018): `/login/RequestAuth.ashx` возвращает
     # URL этого эндпойнта, и Studio POST-ит учётку прямо сюда (контракт
-    # Epic.VIP). Успех = 200 + числовой id + кука `.ROBLOSECURITY`.
-    if self.command == 'POST':
-        raw_content = self.read_content()
-        try:
-            payload = json.loads(raw_content)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            payload = dict(urllib.parse.parse_qsl(
-                raw_content.decode('utf-8', errors='replace'),
-            ))
-        if not isinstance(payload, dict):
-            payload = {}
-
-        username = _extract_username(payload)
-        password = _extract_password(payload)
-        users = util.auth.get_users()
-        record = users.get_by_username(username)
-        if not username or record is None or not users.verify_password(record, password):
-            _send_auth_error(self, 'Incorrect username or password.', 401)
-            return True
-
-        token = record.get('token') or users.issue_token(username)
-        identity = util.auth.get_studio_player_identity(self)
-        headers = {'Set-Cookie': util.auth.make_cookie_header(token)} if token else None
-        self.send_json(
-            identity[0] if identity is not None else 0,
-            headers=headers,
-        )
-        return True
-
+    # Epic.VIP). Успех = 200 + числовой id; учётку не проверяем.
     identity = util.auth.get_studio_player_identity(self)
-    self.send_json(
-        identity[0] if identity is not None else 0,
-        headers=util.auth.studio_auth_headers(self),
-    )
+    self.send_json(identity[0] if identity is not None else 0)
     return True
 
 
 @server_path(r'/Users/(\d+)', regex=True)
 def _(self: web_server_handler, match: re.Match[str]) -> bool:
-    # Раньше был статический `/Users/1630228` с захардкоженным id.
-    # Отдаём тот жеbare id, что и раньше (Studio 2021E ожидает именно число),
-    # но берем его из сессии, а не из константы.
-    requested_id = int(match[1])
-    identity = util.auth.get_studio_player_identity(self)
-    auth_headers = util.auth.studio_auth_headers(self)
-
-    # Чужой id: отдаём как есть — это может быть запрос об игроке плейса.
-    # Свой id — тоже число (Studio 2021E ожидает именно число, не JSON-модель).
-    self.send_json(requested_id, headers=auth_headers)
+    # Studio ожидает просто число (не JSON-модель пользователя).
+    # Чужой id отдаём как есть — это может быть запрос об игроке плейса.
+    self.send_json(int(match[1]))
     return True
 
 
@@ -243,7 +136,7 @@ def _(self: web_server_handler) -> bool:
             'EmailNotificationEnabled': False,
             'PasswordNotificationEnabled': False,
             'CountryCode': 'RU',
-        }, headers=util.auth.studio_auth_headers(self))
+        })
         return True
 
     # Игровой путь (RCC-режим): userId приходит из `Roblox-Session-Id`.
@@ -277,11 +170,11 @@ def _(self: web_server_handler) -> bool:
 
 @server_path('/login/forgotPasswordOrUsername/')
 def _(self: web_server_handler) -> bool:
-    # Studio ссылается на эту страницу из диалога логина; локально
-    # восстановление пароля не предусмотрено (файл правится руками).
+    # Studio ссылается на эту страницу из диалога логина; паролей больше
+    # нет — личность задаётся флагом `-u` при запуске студии.
     self.send_data(
-        b'<html><body><h1>Password reset is not available.</h1>'
-        b'<p>Edit data/studio-users.toml on the server.</p></body></html>',
+        b'<html><body><h1>Passwords are not used.</h1>'
+        b'<p>The Studio user is set with the `-u`/`--user_code` launch flag.</p></body></html>',
         headers={'content_type': 'text/html; charset=utf-8'},
     )
     return True

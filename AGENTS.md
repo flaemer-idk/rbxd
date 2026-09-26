@@ -206,6 +206,18 @@ png рядом или серая заглушка, `/ide/clienttoolbox` — ст
 и `marketplace/productinfo` понимают локальные id: хук в
 `assets/__init__.py:get_asset` + ветка в `endpoints/marketplace.py`.
 
+**Личность Studio (форковая фича!)** — без аутентификации: пользователь
+задаётся флагом `-u`/`--user_code` при запуске студии
+(`python3 _main.py studio -u flaemer`), тем же механизмом, что и у плеера.
+Без флага user_code разрешается один раз за сессию через хук
+`server_core.retrieve_default_user_code()` (тот же, что отдаёт
+`/rfd/default-user-code` плееру). `util/auth.py` — только разрешение
+`user_code → (id, username)` через `join_data.init_player`; пароли, база
+`studio-users.toml`, токены и куки `.ROBLOSECURITY` убраны. В игровом
+(RCC) режиме студийной личности нет. Эндпойнты логина
+(`endpoints/studio.py`) остались ради Studio, но любую учётку отображают
+на пользователя из `-u`.
+
 Корневые файлы: `CHANGELOG.md` (апстримный), `shell.nix` (NixOS dev-shell: umu-launcher,
 wineWow64, cage, winetricks), `pyrightconfig.json` (include: `Source`), `.python-version` (3.13),
 `repomix.config.json` + `.repomixignore` (упаковка кода для скармливания LLM —

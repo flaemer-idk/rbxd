@@ -118,6 +118,7 @@ class web_server(http.server.ThreadingHTTPServer):
         game_config: game_config.obj_type,
         server_mode: server_mode,
         log_filter: logger.obj_type,
+        user_code: str | None = None,
         *args, **kwargs,
     ) -> None:
         self.game_config = game_config
@@ -132,6 +133,13 @@ class web_server(http.server.ThreadingHTTPServer):
             if self.is_ipv6
             else socket.AF_INET
         )
+        self.user_code = user_code
+        if self.user_code is None and server_mode == server_mode.STUDIO:
+            # Личность Studio без явного `-u`: тот же хук, что выдаёт
+            # user_code игроку через /rfd/default-user-code. Разрешается
+            # один раз на сессию вебсервера, чтобы личность была стабильной.
+            self.user_code = \
+                game_config.server_core.retrieve_default_user_code.call_with_tick()
 
         self.logger.log(
             (

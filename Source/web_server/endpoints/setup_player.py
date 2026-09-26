@@ -5,7 +5,8 @@ from web_server._logic import web_server_handler, server_path
 
 @server_path('/rfd/default-user-code')
 def _(self: web_server_handler) -> bool:
-    result = self.game_config.server_core.retrieve_default_user_code()
+    # Хук может объявляться и с tick, и без — см. `call_with_tick`.
+    result = self.game_config.server_core.retrieve_default_user_code.call_with_tick()
     self.send_data(bytes(result, encoding='utf-8'))
     return True
 
