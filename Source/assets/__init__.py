@@ -7,7 +7,7 @@ import os
 
 # Internal or local application imports
 import util.const
-from . import material, queue, returns, serialisers, extractor, thumbnail
+from . import material, queue, returns, serialisers, extractor, thumbnail, toolbox
 
 
 @dataclasses.dataclass
@@ -243,6 +243,15 @@ class asseter:
     ) -> returns.base_type:
         if not bypass_blocklist and self.is_blocklisted(asset_id):
             return returns.construct(error='Asset is blocklisted.')
+
+        if toolbox.is_toolbox_id(asset_id):
+            # Ассеты локального тулбокса живут только в data/Toolbox: мимо
+            # кэша плейса, общего пула и интернета. Читаем с диска каждый
+            # раз — файлы могут меняться на лету.
+            data = toolbox.load_asset_bytes(asset_id)
+            if data is not None:
+                return returns.construct(data=data)
+            return returns.construct(error='Toolbox asset not found.')
 
         asset_path = self.get_asset_path(asset_id)
         local_data = self._load_file(asset_path)

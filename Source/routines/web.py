@@ -19,6 +19,9 @@ class obj_type(logic.gameconfig_entry, logic.loggable_entry):
     is_ssl: bool
 
     server_mode: SERVER_MODE_TYPE
+    # Личность Studio (флаг `-u`/`--user_code`); None — берётся из хука
+    # `retrieve_default_user_code` один раз на сессию вебсервера.
+    user_code: str | None = None
     httpd: web_server_logic.web_server | None = None
 
     def __post_init__(self) -> None:
@@ -35,6 +38,7 @@ class obj_type(logic.gameconfig_entry, logic.loggable_entry):
             self.game_config,
             self.server_mode,
             self.logger,
+            user_code=self.user_code,
         )
 
         th = threading.Thread(

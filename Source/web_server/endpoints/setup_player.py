@@ -1,11 +1,31 @@
 import re
+import time
+
+import util.const
 
 from web_server._logic import web_server_handler, server_path
 
 
+@server_path('/rfd/status')
+def _(self: web_server_handler) -> bool:
+    '''
+    Машинная готовность вебсервера: HTTP-пинг с телом вместо голого
+    TCP-поллинга порта (порт открыт ≠ сервер отвечает).
+    '''
+    self.send_json({
+        'rfd_version': util.const.GIT_RELEASE_VERSION,
+        'roblox_version': self.game_config.game_setup.roblox_version.name,
+        'place_iden': self.game_config.game_setup.place_iden,
+        'server_mode': self.server.server_mode.name,
+        'uptime_sec': round(time.time() - self.server.started_at, 1),
+    })
+    return True
+
+
 @server_path('/rfd/default-user-code')
 def _(self: web_server_handler) -> bool:
-    result = self.game_config.server_core.retrieve_default_user_code()
+    # Хук может объявляться и с tick, и без — см. `call_with_tick`.
+    result = self.game_config.server_core.retrieve_default_user_code.call_with_tick()
     self.send_data(bytes(result, encoding='utf-8'))
     return True
 

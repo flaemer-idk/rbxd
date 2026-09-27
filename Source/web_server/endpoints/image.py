@@ -20,6 +20,7 @@ import json
 import os
 import random
 import re
+import secrets
 import ssl
 import urllib.request
 from datetime import UTC, datetime
@@ -658,7 +659,13 @@ def _build_avatar_image_url(
     width: int,
     height: int,
 ) -> str:
-    return f"{self.hostname}/avatar-thumbnail/image?userId={user_id}&x={width}&y={height}"
+    # `cb` — cache-buster: URL каждый раз новый, иначе клиентский кэш
+    # (WinInet в wine-префиксе) навсегда «приклеивает» первую картинку
+    # к userId, и рандомный плейсхолдер перестаёт ротироваться.
+    return (
+        f"{self.hostname}/avatar-thumbnail/image"
+        f"?userId={user_id}&x={width}&y={height}&cb={secrets.token_hex(4)}"
+    )
 
 
 def _build_headshot_image_url(
@@ -667,7 +674,10 @@ def _build_headshot_image_url(
     width: int,
     height: int,
 ) -> str:
-    return f"{self.hostname}/headshot-thumbnail/image?userId={user_id}&x={width}&y={height}"
+    return (
+        f"{self.hostname}/headshot-thumbnail/image"
+        f"?userId={user_id}&x={width}&y={height}&cb={secrets.token_hex(4)}"
+    )
 
 
 def _build_game_icon_url(
@@ -782,7 +792,12 @@ def avatar_thumbnail_json(self: web_server_handler) -> bool:
         else f"{self.hostname}/avatar-placeholder"
     )
     if user_id is None:
-        self.send_json({"Final": True, "Url": fallback_url})
+        # no-store обязателен: без него WinInet кэширует json, `cb=` внутри
+        # замерзает, и картинка навсегда приклеивается к userId.
+        self.send_json(
+            {"Final": True, "Url": fallback_url},
+            headers={"Cache-Control": "no-store"},
+        )
         return True
 
     size_pair = handle_resolution_check(
@@ -801,7 +816,7 @@ def avatar_thumbnail_json(self: web_server_handler) -> bool:
     self.send_json({
         "Final": True,
         "Url": _build_avatar_image_url(self, user_id, target_width, target_height),
-    })
+    }, headers={"Cache-Control": "no-store"})
     return True
 
 
@@ -1234,7 +1249,10 @@ def batch_image_request(self: web_server_handler) -> bool:
             "version": version,
         })
 
-    self.send_json({"data": processed_requests})
+    self.send_json(
+        {"data": processed_requests},
+        headers={"Cache-Control": "no-store"},
+    )
     return True
 
 
@@ -1311,7 +1329,7 @@ def multi_avatar_headshot(self: web_server_handler) -> bool:
             "version": "1",
         })
 
-    self.send_json({"data": processed_requests})
+    self.send_json({"data": processed_requests}, 200, headers={"Cache-Control": "no-store"})
     return True
 
 
@@ -1350,5 +1368,5 @@ def multi_avatar(self: web_server_handler) -> bool:
             "version": "TN3",
         })
 
-    self.send_json({"data": processed_requests}, 200)
+    self.send_json({"data": processed_requests}, 200, headers={"Cache-Control": "no-store"})
     return True

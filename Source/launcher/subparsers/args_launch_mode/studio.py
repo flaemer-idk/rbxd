@@ -42,6 +42,13 @@ def subparse(
         default=20059,
         help='Port number for which to run the locally-hosted web server.',
     )
+    subparser.add_argument(
+        '--user_code', '-u',
+        type=str,
+        nargs='?',
+        default=None,
+        help='Determines the user code for the Studio identity, same as for the player.\nUser codes derive a user name, user iden number, and skin of the Studio user.',
+    )
 
     subparser.add_argument(
         '--quiet', '-q',
@@ -101,6 +108,7 @@ def _(
                 logger=log_filter,
                 game_config=game_config,
                 server_mode=web.SERVER_MODE_TYPE.STUDIO,
+                user_code=args_ns.user_code,
             ),
         ])
     return routine_args

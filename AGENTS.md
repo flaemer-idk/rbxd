@@ -42,7 +42,7 @@
 
 ## Полный CLI-контракт (все моды и флаги)
 
-Моды (`launch_mode`): `server` · `studio` · `player` · `serialise` · `download` · `test` · `cookie`.
+Моды (`launch_mode`): `server` · `webserver` · `studio` · `player` · `serialise` · `download` · `test` · `cookie`.
 Общие флаги для `server`/`player`/`studio` (из `args_aux/`):
 
 | Флаг | Значение |
@@ -70,6 +70,25 @@
 | `--quiet`/`-q`, `--loud` | — | громкость логов (взаимоисключающие) |
 | `--no_colour`/`--no_color` | off | убрать ANSI |
 | `--rcc_log_options`/`--rcc_log`/`-log` | None | фильтр FLog-типов RCC (`choices=LOG_LEVEL_LIST`) |
+
+Мод `webserver` (`args_launch_mode/webserver.py`) — вебсервер без RCC и вообще без
+бинарников (Wine/Proton/`--backend` не нужны и не принимаются):
+
+| Флаг | Дефолт | Заметка |
+|---|---|---|
+| `--config_path`/`--config`/`-cp` | — | `nargs=*`; **без него** генерится CDN-конфиг (см. ниже) |
+| `--ipv4_only`/`--ipv4-only`, `--ipv6_only`/`--ipv6-only` | оба off | иначе слушает и v4, и v6 |
+| `--web_port`/`--webserver_port`/`-wp`/`-p` | 2005 | `nargs=*`, добиваются подряд |
+| `--quiet`/`-q`, `--loud`, `--no_colour` | — | как у `server` |
+
+Два применения:
+- **с `--config`** — веб одного плейса (то же, что `server --skip_rcc`): так rbxdserver
+  поднимает веб-часть сессии отдельным процессом, а RCC цепляется к нему через
+  `server --skip_web`;
+- **без `--config`** — CDN-инстанс: синтетический конфиг `generate_cdn_config()`
+  (`game_config/__init__.py`), версия v347, общий пул `data/Assets`, состояние в
+  `data/CDN/` (AssetCache + sqlite). Плейс-файла нет, `rbxl_uri` не извлекается.
+  Это «раздача ассетов/скинов/превью» для внешних клиентов (rbxdclient).
 
 Остальные моды: `player` — `--rcc_host`/`--host`/`-rh`, `--rcc_port`/`-rp`, `--web_host`/`-wh`/`-h`,
 `--web_port`/`-wp`/`-p`, `--user_code`/`-u`, `--quiet`, `--loud`. `studio` — `--config`/`-cp`,
@@ -133,15 +152,22 @@ rcc_port_gen, game_configs)` — на каждый плейс поднимает
 - `bin_entry` для IPv6-адреса превращает его в IPv4-mapped вид (`[…85.195.213.22]`), потому что
   CoreScripts Roblox не любят BaseUrl без точек (`player.__post_init__`).
 - Вебсервер всегда HTTPS; клиенты доверяют любому сертификату (`get_none_ssl`,
-  `ssl._create_unverified_context`).
+  `ssl._create_unverified_context`). Исключение — Studio под Wine: её schannel
+  валидирует цепочку, поэтому CA из `<data>/ssl/ca.pem` вшивается в префикс
+  (`Scripts/install_ca_to_wineprefix.py`, детали — INTEGRATION.md §12).
+  Сертификат **стабильный**: кеш `<data>/ssl/` (`ca.pem`/`server.pem`/`server.key`),
+  `RFD_EPHEMERAL_SSL=1` возвращает per-run генерацию.
 - `is_privileged` = loopback-адрес пира; `/rfd/data-transfer` работает только с локального RCC.
 
 ## Контракт для rbxdclient / rbxdserver (если их переписывать)
 
 Подробно — в **`INTEGRATION.md`** рядом: точные команды запуска, семантика портов и
 готовности, `/rfd/*`-эндпойнты, что именно стоит выбросить при реврайте (pgrep/pkill,
-хак `path == ""`, TOCTOU портов) и какие эндпойнты в rbxd для этого не хватает
-(статуса/готовности в rbxd **нет** — только TCP-поллинг порта).
+хак `path == ""`, TOCTOU портов). Готовность вебсервера — HTTP `GET /rfd/status`
+(JSON: версия rbxd, roblox_version, place_iden, server_mode, uptime) или `GET /`;
+готовность RCC — строка `RFD_RCC_READY` в его stdout (печатаётся при
+`LogAction.READY`, т.е. `Finished initializing game`; порт RCC — UDP, TCP-поллинг
+не работает).
 
 ## Структура (что где искать)
 
@@ -149,7 +175,7 @@ rcc_port_gen, game_configs)` — на каждый плейс поднимает
 Source/_main.py                     — вход; ставит WINEDEBUG=-all; launcher.read_eval_loop()
 Source/launcher/__init__.py         — read_eval_loop / perform_with_args; REPE-цикл, если аргументов нет
 Source/launcher/subparsers/_logic.py — launch_mode enum + реестр add_args/serialise_args
-Source/launcher/subparsers/args_launch_mode/<mode>.py — флаги и сериализация для server/player/studio/…
+Source/launcher/subparsers/args_launch_mode/<mode>.py — флаги и сериализация для server/webserver/player/studio/…
 Source/launcher/subparsers/args_aux/*.py             — общие флаги: backend, download, clear_cache, debug
 Source/routines/_logic.py           — ИЕРАРХИЯ entry-классов (см. ниже) — самое важное
 Source/routines/web.py              — HTTP-сервер (ThreadingHTTPServer + trustme-сертификат)
@@ -160,7 +186,7 @@ Source/routines/player/__init__.py  — RobloxPlayerBeta.exe, PlaceLauncher.ashx
 Source/routines/studio/__init__.py  — RobloxStudioBeta.exe, -localPlaceFile
 Source/routines/cookie.py           — показать .ROBLOSECURITY-куку
 Source/web_server/_logic.py         — http.server-подобие: server_path-реестр, маршрутизация
-Source/web_server/endpoints/*.py    — 17 модулей, ~114 роутов «api.roblox.com»
+Source/web_server/endpoints/*.py    — 21 модулей, ~120 роутов «api.roblox.com»
 Source/game_config/{__init__,structure}.py — GameConfig.toml: схема + парсинг (TOML/JSON)
 Source/config_type/                 — типы конфига: wrappers (uri_obj, path_str, counter), structs
 Source/assets/                      — кэш ассетов + сериализаторы (rbxl/rbxlx/mesh/csg/video/thumbnail)
@@ -169,7 +195,9 @@ Source/pretasks/{download,clear_cache}.py — авто-скачивание би
 Source/util/{const,resource,versions}.py  — константы, разрешение путей, маппинг версий
 Source/vendored/                    — tqdm + sqlite_worker (встроены намертво с 0.66.5)
 Source/tester/test_*.py             — тесты (pytest-стиль): asset, logger, serialise, server
-Source/ssl/                       — ca.pem/server.pem/server.key — НИГДЕ НЕ ИСПОЛЬЗУЕТСЯ (релевтный сертификат генерится trustme в рантайме)
+Source/ssl/                       — старые статические сертификаты, КОДОМ НЕ ИСПОЛЬЗУЮТСЯ
+                                    (рабочий кеш — <rbxd>/data/ssl/, см. gotchas; это ручной бэкап)
+Scripts/install_ca_to_wineprefix.py — CA вебсервера → реестр wine-префикса (Studio v463)
 Source/Roblox/v347/, v463/          — ~1 ГБ БИНАРНИКОВ, В .gitignore (см. pretasks/download.py)
 ```
 
@@ -187,6 +215,36 @@ TTL 30 дней, при ошибке сети — устаревший кэш). 
 элементы `assetAndAssetTypeIds` (v463, замена конечностей R15), аксессуары →
 `accessoryVersionIds` (v347). Скин читается **на каждый запрос** — смена скина
 работает вживую. Подробности — `../rbxdserver/DESIGN.md` (раздел «Скины»).
+
+**Toolbox (форковая фича!)** — локальная библиотека ассетов для Studio:
+`data/Toolbox/<Категория>/<имя>.rbxm` (+ опционально `<имя>.png` с тем же
+именем — превью). Категории — подпапки Models, Meshes, Images, AudioVideo
+(создаются сами при первом скане; посторонние подпапки тоже сканируются).
+Сканер `assets/toolbox.py` пересканирует папку на каждый запрос — без кэшей
+и лимитов, файлы можно менять на лету. id локальных ассетов — от
+`90_000_000_000_000` (14 цифр, с реальными ассетами Roblox не пересекаются),
+считается хешем от «категория/имя», так что добавление файлов не сдвигает
+id старых. Эндпойнты `web_server/endpoints/toolbox.py`:
+`/ide/toolbox/items` — формат старого веб-тулбокса `{TotalResults, Results}`
+(параметры num/page/keyword/category сняты с живого лога студии; алиасы
+FreeModels/FreeDecals/FreeAudio мапятся на папки), `/model-thumbnails` —
+png рядом или серая заглушка, `/ide/clienttoolbox` — страница тулбокса для
+встроенного браузера студии: вкладки, поиск, пагинация, вставка через
+`window.external.Insert/StartDrag` (мост, как у ревайвлов). `/asset/?id=`
+и `marketplace/productinfo` понимают локальные id: хук в
+`assets/__init__.py:get_asset` + ветка в `endpoints/marketplace.py`.
+
+**Личность Studio (форковая фича!)** — без аутентификации: пользователь
+задаётся флагом `-u`/`--user_code` при запуске студии
+(`python3 _main.py studio -u flaemer`), тем же механизмом, что и у плеера.
+Без флага user_code разрешается один раз за сессию через хук
+`server_core.retrieve_default_user_code()` (тот же, что отдаёт
+`/rfd/default-user-code` плееру). `util/auth.py` — только разрешение
+`user_code → (id, username)` через `join_data.init_player`; пароли, база
+`studio-users.toml`, токены и куки `.ROBLOSECURITY` убраны. В игровом
+(RCC) режиме студийной личности нет. Эндпойнты логина
+(`endpoints/studio.py`) остались ради Studio, но любую учётку отображают
+на пользователя из `-u`.
 
 Корневые файлы: `CHANGELOG.md` (апстримный), `shell.nix` (NixOS dev-shell: umu-launcher,
 wineWow64, cage, winetricks), `pyrightconfig.json` (include: `Source`), `.python-version` (3.13),
@@ -232,9 +290,15 @@ python3 Source/_main.py server --config <place>/GameConfig.toml \
 # То же через wine (то, что делает rbxdserver):
 python3 Source/_main.py server --config … --backend wine --wine-prefix <prefix>
 
-# Ключевые моды: server | player | studio | download | serialise | test | cookie
+# Ключевые моды: server | webserver | player | studio | download | serialise | test | cookie
 # Общие флаги:  --backend {wine,proton,windows}  --proton-path  --wine-path  --wine-prefix
 python3 Source/_main.py server --help   # помощь (здесь это -? / --help; -h занят под --rcc_host)
+
+# Веб-часть сессии плейса отдельным процессом (RCC потом цепляется через --skip_web):
+python3 Source/_main.py webserver --config <place>/GameConfig.toml --web_port <port> --ipv4-only
+
+# Постоянный CDN-веб (ассеты/скины/превью для клиентов, без плейса и Wine):
+python3 Source/_main.py webserver --ipv4-only --web_port 8090
 ```
 
 Константы (`util/const.py`): `RFD_DEFAULT_PORT = 2005`, `PLACE_IDEN_CONST = 1818`,

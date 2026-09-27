@@ -217,6 +217,11 @@ class obj_type(logic.bin_entry, logic.gameconfig_entry):
                     case log_action.LogAction.TERMINATE:
                         threading.Thread(target=self.kill).start()
                         return
+                    case log_action.LogAction.READY:
+                        # Стабильная машиночитаемая строка для внешних
+                        # супервизоров: порт RCC — UDP, TCP-поллингом его
+                        # готовность не детектить.
+                        print('RFD_RCC_READY', flush=True)
                     case _:
                         pass
 

@@ -18,6 +18,8 @@ from . import (
     static,
     text_filter,
     studio,
+    universes,
+    toolbox,
     misc,
     fvars,
     presence,

@@ -5,6 +5,7 @@ import re
 
 # Local application imports
 from web_server._logic import web_server_handler, server_path
+import assets.toolbox
 import util.const
 
 
@@ -332,6 +333,39 @@ def _(self: web_server_handler) -> bool:
                 'CreatorType': 'User',
                 'CreatorTargetId': 1
             },
+        })
+        return True
+
+    toolbox_entry = assets.toolbox.find_entry(asset_id)
+    if toolbox_entry is not None:
+        self.send_json({
+            'AssetId': toolbox_entry.id_num,
+            'ProductId': toolbox_entry.id_num,
+            'Name': toolbox_entry.name,
+            'Description': f'Локальный ассет тулбокса ({toolbox_entry.category}).',
+            'AssetTypeId': assets.toolbox.CATEGORY_TYPE_IDS.get(
+                toolbox_entry.category, 10,
+            ),
+            'Creator': {
+                'Id': 1,
+                'Name': metadata.creator_name,
+                'CreatorType': 'User',
+                'CreatorTargetId': 1
+            },
+            'IconImageAssetId': 0,
+            'Created': 0,
+            'Updated': 0,
+            'PriceInRobux': 0,
+            'PriceInTickets': 0,
+            'Sales': 0,
+            'IsNew': False,
+            'IsForSale': False,
+            'IsPublicDomain': True,
+            'IsLimited': False,
+            'IsLimitedUnique': False,
+            'Remaining': None,
+            'MinimumMembershipLevel': 0,
+            'ContentRatingTypeId': 0,
         })
         return True
 
