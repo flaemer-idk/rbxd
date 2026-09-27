@@ -9,6 +9,8 @@
 !Source/**
 !Examples/
 !Examples/**
+!Scripts/
+!Scripts/**
 Examples/**/AssetCache/
 RFD
 *.exe
