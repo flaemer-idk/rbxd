@@ -33,7 +33,7 @@ Source/ssl/
 skins
 logs
 f3x
-
+Scripts/assetcache
 repomix-output.xml
 repomix.config.json
 .repomixignore

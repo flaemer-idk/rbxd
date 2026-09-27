@@ -77,10 +77,10 @@ def _(
     else:
         game_config = config.get_cached_config(args_ns.config_path)
 
-    # Принудительно выставляем версию v463 для веб-сервера Студии
-    # по причинам того что да v347 запускает в себе клиент для тестов гуд
-    # но v463 удобнее в билдинге так что лучше v463
-    game_config.game_setup.roblox_version = util.versions.rōblox.v463
+    # Принудительно выставляем версию v347 для Студии: у v347 работает
+    # playtest (у v463 плейтест-клиент падает с id 17), а билдим в v347 —
+    # v463-клиент и сервер всё равно читают старый формат плейса на ура.
+    game_config.game_setup.roblox_version = util.versions.rōblox.v347
 
     web_port: int = args_ns.web_port
     log_filter = dataclasses.replace(

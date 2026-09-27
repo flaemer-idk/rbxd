@@ -28,6 +28,46 @@ from pretasks import (
     clear_cache,
 )
 
+# Базовые FastFlags, вшиваемые в ClientAppSettings.json клиентских бинарей
+# (Player/Studio; RCC этот файл не читает). Список из RFD issue #13: фичи,
+# которые в 2021E (v463) уже сидят в движке, но закрыты флагами. Формат
+# значений — строки 'True'/'False', как это ждёт ClientAppSettings.
+# Старые клиенты (v347) незнакомые флаги молча игнорируют.
+# Приоритет в update_fvars: BASE_FVARS < файл пользователя < флаги логгера,
+# т.е. любой флаг переопределяется руками в data/Roblox/<ver>/<bin>/ClientSettings/.
+BASE_FVARS: dict[str, str] = {
+    # --- графика ---
+    # Свойство ParticleEmitter.Orientation (FacingCamera/VelocityParallel/...):
+    # без флага эмиттеры игнорируют ориентацию
+    'FFlagGraphicsParticlesNewOrientations': 'True',
+    # Объёмные облака (инстанс Clouds) — оба флага в паре
+    'FFlagEnableCloudsPhase1Beta': 'True',
+    'FFlagRenderClouds': 'True',
+    # Автоматический размер UI-элементов (TextLabel.AutomaticSize и т.п.)
+    'FFlagAutomaticSizing2': 'True',
+    # Поддержка MeshPart-голов
+    'FFlagSupportMeshPartHeads': 'True',
+
+    # --- физика (вся из issue #13) ---
+    # Расширенный BasePart API: ApplyImpulse/ApplyAngularImpulse и т.д.
+    'FFlagSimExpandPartPhysicsApi': 'True',
+    # UniversalConstraint в физ-солвере
+    'FFlagSimSolverUniversalConstraintEnabled': 'True',
+    # Touched не триггерится у частей с CanTouch=false
+    'FFlagSimCanNotTriggerTouchEvents': 'True',
+    # Touched-события уважают collision groups
+    'FFlagSimTouchEventsUseCollisionGroups': 'True',
+    # Вложенные таблицы в raycast-фильтре
+    'FFlagRaycastNestedFilterTables': 'True',
+
+    # НЕ включать (из issue #13, сломано в 463):
+    #   DFFlagDataStoresV2Enabled, DFFlagEnableMeshPartHeadsProperty
+    # Опционально, по вкусу (не включено): Future lighting
+    # (FFlagDebugForceFutureIsBrightPhase3, заметно ест FPS), современный
+    # текстурный конвейер (FFlagTxRlEn, бывают регрессии), task-библиотека
+    # (FFlagTaskLibrary), Parallel Luau (FFlagParallelLua, нестабильно).
+}
+
 
 @dataclasses.dataclass(unsafe_hash=True)
 class base_entry:
@@ -345,10 +385,21 @@ class bin_entry(popen_entry, loggable_entry):
             'ClientSettings',
             'ClientAppSettings.json',
         )
-        with open(path, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
+        # Файла может не быть вообще, а иногда он лежит ПУСТЫМ (наблюдалось
+        # на v463/Studio) — json.load на таком падает и убивает весь bootstrap.
+        json_data = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    json_data = loaded
+            except (OSError, json.JSONDecodeError) as e:
+                print(f'warning: {path} unreadable ({e}), rewriting from scratch')
 
-        json_data |= new_flags
+        # Приоритет: BASE_FVARS (код) < файл пользователя < флаги логгера
+        json_data = {**BASE_FVARS, **json_data, **new_flags}
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(json_data, f, indent='\t')
 
