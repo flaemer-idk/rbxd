@@ -4,6 +4,7 @@ import enum
 
 class launch_mode(enum.Enum):
     SERVER = 'server'
+    WEBSERVER = 'webserver'
     STUDIO = 'studio'
     PLAYER = 'player'
     SERIALISE_FILE = 'serialise'

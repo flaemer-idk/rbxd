@@ -153,3 +153,35 @@ def generate_config(rbxl_file: str, version: util.versions.rōblox = util.versio
     base_dir = util.resource.retr_full_path(util.resource.dir_type.MISC)
     config = obj_type(skeleton, base_dir)
     return config
+
+
+@functools.cache
+def generate_cdn_config() -> obj_type:
+    '''
+    Синтетический конфиг для безплейсового CDN-вебсервера (режим `webserver`
+    без `--config`): версия v347, общий пул ассетов `data/Assets`, состояние
+    (кеш, sqlite) — в `data/CDN`, чтобы не засорять cwd.
+
+    `rbxl_uri` здесь никогда не извлекается: веб-рутина не трогает
+    `place_file` — это удел bootstrap RCC.
+    '''
+    skeleton = {
+        'server_core': {'place_file': {'rbxl_uri': 'rbxassetid://1818'}},
+        'game_setup': {
+            'roblox_version': util.versions.rōblox.v347.name,
+            'asset_cache': {
+                'dir_path': './CDN/AssetCache',
+                'shared_dir_path': None,
+            },
+            'persistence': {
+                'sqlite_path': './CDN/_.sqlite',
+            },
+        },
+    }
+    base_dir = util.resource.retr_full_path(util.resource.dir_type.MISC)
+    os.makedirs(
+        os.path.join(base_dir, 'CDN'),
+        exist_ok=True,
+    )
+    config = obj_type(skeleton, base_dir)
+    return config

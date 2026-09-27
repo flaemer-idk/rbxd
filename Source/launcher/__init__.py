@@ -13,6 +13,7 @@ from .subparsers.args_launch_mode import (
     download as _,
     player as _,
     server as _,
+    webserver as _,
     studio as _,
     serialiser as _,
     test as _,

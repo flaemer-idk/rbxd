@@ -5,10 +5,12 @@ import functools
 import http.server
 import ipaddress
 import json
+import os
 import re
 import socket
 import ssl
 import tempfile
+import time
 import traceback
 from urllib import parse
 
@@ -17,6 +19,7 @@ from typing import Any, Callable, override
 
 # Local application imports
 import util.versions as versions
+import util.resource
 import game_config
 import logger
 from . import presence_store
@@ -128,6 +131,7 @@ class web_server(http.server.ThreadingHTTPServer):
         self.server_mode = server_mode
         self.logger = log_filter
         self.is_ipv6 = is_ipv6
+        self.started_at = time.time()
         self.address_family = (
             socket.AF_INET6
             if self.is_ipv6
@@ -159,29 +163,73 @@ class web_server(http.server.ThreadingHTTPServer):
         )
 
 
+def _atomic_write(path: str, data: bytes) -> None:
+    tmp = path + '.tmp'
+    with open(tmp, 'wb') as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def _generate_ssl_files(cache_dir: str | None) -> tuple[str, str, str]:
+    '''
+    Генерит CA + серверный сертификат (SAN localhost) через trustme.
+    `cache_dir=None` → временный каталог (эphemeral-режим), иначе файлы пишутся
+    туда атомарно и переиспользуются всеми последующими запусками.
+    Возвращает (ca, server_cert, server_key).
+    '''
+    if cache_dir is None:
+        cache_dir = tempfile.mkdtemp(prefix='rfd-ssl-')
+    os.makedirs(cache_dir, exist_ok=True)
+
+    ca_path = os.path.join(cache_dir, 'ca.pem')
+    cert_path = os.path.join(cache_dir, 'server.pem')
+    key_path = os.path.join(cache_dir, 'server.key')
+
+    auth = trustme.CA(key_type=trustme.KeyType.RSA)
+    cert = auth.issue_cert('localhost')
+
+    _atomic_write(ca_path, auth.cert_pem.bytes())
+    _atomic_write(
+        cert_path,
+        b''.join(pem.bytes() for pem in cert.cert_chain_pems),
+    )
+    _atomic_write(key_path, cert.private_key_pem.bytes())
+    os.chmod(key_path, 0o600)
+    return ca_path, cert_path, key_path
+
+
+def obtain_ssl_files() -> tuple[str, str, str]:
+    '''
+    Файлы сертификата вебсервера. По умолчанию — СТАБИЛЬНЫЕ: один раз
+    генерятся и кешируются в `<data>/ssl/`, так что CA можно один раз вшить
+    в wine-префикс (Studio/schannel валидирует цепочку; см.
+    `scripts/install_ca_to_wineprefix.py`) и не повторять после каждого
+    рестарта. `RFD_EPHEMERAL_SSL=1` возвращает старое поведение — свежий
+    самоподписанный сертификат на каждый запуск.
+    '''
+    if os.environ.get('RFD_EPHEMERAL_SSL') == '1':
+        return _generate_ssl_files(None)
+
+    cache_dir = os.path.join(
+        util.resource.get_rfd_top_dir(), 'ssl',
+    )
+    ca_path = os.path.join(cache_dir, 'ca.pem')
+    cert_path = os.path.join(cache_dir, 'server.pem')
+    key_path = os.path.join(cache_dir, 'server.key')
+    if all(os.path.isfile(p) for p in (ca_path, cert_path, key_path)):
+        return ca_path, cert_path, key_path
+
+    return _generate_ssl_files(cache_dir)
+
+
 class web_server_ssl(web_server):
     def get_context(self):
-        self.tmp_cert = tempfile.NamedTemporaryFile(delete_on_close=False)
-        self.tmp_key = tempfile.NamedTemporaryFile(delete_on_close=False)
+        _, cert_path, key_path = obtain_ssl_files()
 
-        auth = trustme.CA(key_type=trustme.KeyType.RSA)
-        cert = auth.issue_cert('localhost')
-        for i, blob in enumerate(cert.cert_chain_pems):
-            blob.write_to_path(
-                path=self.tmp_cert.name,
-                append=(i > 0),
-            )
-        cert.private_key_pem.write_to_path(
-            path=self.tmp_key.name,
-            append=False,
-        )
-
-        self.tmp_cert.close()
-        self.tmp_key.close()
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(
-            certfile=self.tmp_cert.name,
-            keyfile=self.tmp_key.name,
+            certfile=cert_path,
+            keyfile=key_path,
         )
         ctx.check_hostname = False
         return ctx

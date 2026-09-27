@@ -80,7 +80,7 @@ def _(
     # Принудительно выставляем версию v463 для веб-сервера Студии
     # по причинам того что да v347 запускает в себе клиент для тестов гуд
     # но v463 удобнее в билдинге так что лучше v463
-    game_config.game_setup.roblox_version = util.versions.rōblox.v463
+    game_config.game_setup.roblox_version = util.versions.rōblox.v347
 
     web_port: int = args_ns.web_port
     log_filter = dataclasses.replace(

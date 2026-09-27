@@ -16,6 +16,7 @@
 | `WINEPREFIX` | для `--backend wine`; rbxdserver держит `<data-dir>/wine/.wine-rfd`. |
 | `PROTONPATH`, `UMU_RUNTIME_UPDATE=0` | rbxd ставит сам для `--backend proton` (если не задано `--proton-path`). |
 | `data/env.env` | не env-переменная, а файл: читается при старте (`KEY=VALUE`, `#` — комментарии). Переменные из файла **не перебивают** реальные env. Сюда кладут `ROBLOSECURITY` — единственную cookie, которую rbxd использует (скачивание приватных ассетов). |
+| `RFD_EPHEMERAL_SSL=1` | необязательный: вернуть старое поведение «свежий самоподписанный сертификат на каждый запуск». По умолчанию сертификат стабилен (`<rbxd>/data/ssl/`, см. §12). |
 | ~~`RFD_DATA_DIR`~~ | **удалён.** Корень данных теперь фиксированный `<rbxd>/data` (`util.resource.get_rfd_top_dir`); переменная игнорируется. |
 
 **Корень данных — `<rbxd>/data`, не cwd.** Раньше `logs/`, `LocalStorage/`
@@ -43,6 +44,19 @@ python3 <rbxd>/Source/_main.py server \
   --config <place_dir>/GameConfig.toml \
   --web_port <P1> --port <P2> \
   --ipv4-only --backend wine --wine-prefix <prefix>
+
+# C) Веб-часть сессии отдельным процессом + RCC цепляется к ней (сплит rbxdserver):
+python3 <rbxd>/Source/_main.py webserver \
+  --config <place_dir>/GameConfig.toml \
+  --web_port <P1> --ipv4-only
+# затем RCC уже без своего вебсервера:
+python3 <rbxd>/Source/_main.py server \
+  --config <place_dir>/GameConfig.toml \
+  --skip_web --web_port <P1> --port <P2> \
+  --ipv4-only --backend wine --wine-prefix <prefix>
+
+# D) Постоянный CDN-веб (без плейса, без Wine; ассеты/скины/превью для клиентов):
+python3 <rbxd>/Source/_main.py webserver --ipv4-only --web_port <CDN>
 ```
 
 Заметки:
@@ -58,17 +72,21 @@ python3 <rbxd>/Source/_main.py server \
 ## 3. Порты и готовность
 
 ```
-web_port  TCP+HTTPS  ← главный индикатор «сервер ожил». Поллить TCP-коннектом.
+web_port  TCP+HTTPS  ← главный индикатор «сервер ожил». Поллить HTTP-запросом (GET /rfd/status).
 rcc_port  UDP        ← сам game-сервер. TCP-поллинг НЕ сработает (это UDP!).
+                       Готовность RCC — строка `RFD_RCC_READY` в его stdout.
 ```
 
 - Порядок подъёма внутри rbxd: **сначала вебсервер, потом RCC** (entries идут в порядке
   `[*web_routine_args, *rcc_routine_args]`, обрабатываются последовательно).
-- rbxd **не сообщает о готовности** никак, кроме «открылся TCP-порт вебсервера».
-  Алгоритм наружного кода: `bind-free-port` → старт rbxd → TCP-полл `web_port` с таймаутом
-  (~120–150 c, т.к. Wine/cage могут тупить) → `GET /` проверить, что отвечает → можно
-  подключать player.
-- `GET /` отвечает plain text: `Roblox Freedom Distribution webserver <ver> [<roblox_version>]`.
+- Готовность вебсервера: `GET /rfd/status` → JSON
+  `{"rfd_version", "roblox_version", "place_iden", "server_mode", "uptime_sec"}`.
+  Порт открыт ≠ сервер готов — TCP-поллинг можно обмануть, HTTP-запрос нет.
+  Резервный индикатор — `GET /` (plain text: `Roblox Freedom Distribution webserver
+  <ver> [<roblox_version>]`).
+- Готовность RCC в сплит-режиме (C): дождаться строки **`RFD_RCC_READY`** в stdout
+  child'а (`routines/rcc/__init__.py` печатает её при `LogAction.READY`, т.е. после
+  `Finished initializing game`). Таймаут всё равно нужен (~150 c, Wine может тупить).
 - Дополнительно клиент тормозит сам: `game_setup.ready_delay_sec` (GameConfig, дефолт 3) —
   этим можно заменить слипы в наружном коде.
 
@@ -89,6 +107,7 @@ TCP-поллингом `web_port` (это правильно). rbxdserver ждё
 | Метод | Путь | Auth | Ответ | Зачем |
 |---|---|---|---|---|
 | `GET` | `/` | нет | `text: RFD webserver <ver> [<rbx_ver>]` | health-check / версия |
+| `GET` | `/rfd/status` | нет | JSON: `rfd_version, roblox_version, place_iden, server_mode, uptime_sec` | **готовность + метаданные** (HTTP вместо TCP-поллинга) |
 | `GET` | `/rfd/roblox-version` | нет | `text: v463` / `v347` | **какую версию клиента запускать** |
 | `GET` | `/rfd/default-user-code` | нет | `text: <user_code>` | user_code по умолчанию |
 | `GET` | `/rfd/is-player-allowed?userId=<int>` | нет | `text: true/false` | повторная проверка при подключении |
@@ -173,16 +192,16 @@ player.exe -a https://<web_host>:<web_port>/login/negotiate.ashx \
 5. `--test` режим (`RFD_NO_CAGE=1`) — оставить, это единственный способ увидеть окно.
 
 **В rbxd (предлагаемые дополнения, ускоряющие реврайт):**
-- `GET /rfd/status` → `{state: starting|running|stopping, place, rcc_port, web_port,
-  players: N, roblox_version}` — убивает необходимость pgrep и внешнего слежения.
+- ✅ `GET /rfd/status` → `{rfd_version, roblox_version, place_iden, server_mode,
+  uptime_sec}` (2026-09; уже HTTP-готовность вместо TCP-поллинга).
 - `GET /rfd/presence` → список игроков онлайн с `last_seen` (см. §11, канал 3). Сейчас
   rbxd — «клетка с золотыми данными»: sqlite `players` хранит всех, кто когда-либо заходил,
   но наружу список онлайн не отдаёт. Эндпойнт решает сразу две задачи: reconciliation
   presence в rbxdserver и реальный список «кто в плейсе» для его веб-панели.
 - Флаг `--rbxdserver <url>` для режимов `server` (push join) **и** `player` (push leave —
   обёртка живёт ровно столько, сколько сессия). Подробно — §11.
-- Явное логирование «RCC ready» в stdout (сейчас `LogAction.READY` — заглушка `pass`),
-  чтобы наружному коду не пришлось гадать по портам.
+- ✅ Явное логирование «RCC ready» в stdout (2026-09: строка `RFD_RCC_READY`,
+  consumer `LogAction.READY` в `routines/rcc/__init__.py`).
 
 ## 9. Контрактный чеклист нового запускателя
 
@@ -349,11 +368,11 @@ rbxdclient превращается в тонкий heartbeat для случа�
 
 ## 10. Wishlist: веб-часть 24/7, RCC по требованию
 
-> **Статус (2026-09): реализовано отдельным проектом `../rbxdweb/`** — Go-порт
-> этой веб-части: один HTTPS-процесс 24/7 без Wine/Python, сам парсит `.rbxl`
-> в AssetCache (пункт 1 wishlist'а), перечитывает конфиг через `POST /rfd/reload`
-> (пункт 3), а пункт «RCC подключается к работающему вебсерверу по порту» —
-> это `--web_port` как здесь. Webhook `--on-join-url` замыкает «плейс по требованию».
+> **Статус (2026-09): реализовано** — в rbxd есть мод `webserver` (веб без RCC,
+> без Wine; без `--config` — CDN-инстанс v347, см. §2 C/D), а оркестрит сплит
+> `../rbxdserver` (Go): постоянный CDN-веб + сессия плейса = отдельный веб-процесс
+> и отдельный RCC-процесс с `--skip_web`. Проект `../rbxdweb/`, упоминавшийся здесь
+> раньше, **не существует** — заметка про него была ошибочной.
 
 Цель: вебсервер каждого плейса крутится **постоянно и дёшево** (чистый Python, без Wine),
 а тяжёлый `RCCService.exe` поднимается только когда в плейс реально играют.
@@ -380,13 +399,20 @@ rbxdclient превращается в тонкий heartbeat для случа�
 
 **Что починить в rbxd, чтобы это стало удобным (wishlist):**
 
-1. ✅ **`save_place_file()` / `save_thumbnail()` переехали из `rcc.bootstrap` в web-часть**
-   (`game_config.save_place_file()`, вызывает и веб-режим, и RCC-бутстрап).
-   **Статус (2026-09): сделано.**
+1. **`save_place_file()` / `save_thumbnail()` в web-части — НЕ нужен.** Раньше здесь
+   стоял пункт «перенести ingestion из RCC в веб» с пометкой «сделано» — это была
+   ошибка: в коде перенос не делался. Разобрались: перенос и не требуется —
+   AssetCache не держит индекс в памяти (`assets/__init__.py:_load_file` читает файл
+   с диска на каждый запрос), RCC при своём bootstrap кладёт плейс в дисковый кеш
+   раньше, чем его у веба запрашивает (игрок не может зайти до готовности RCC).
+   Единственное ограничение: в web-only режиме без RCC `/asset/?id=<place_iden>`
+   отдаёт 404, пока хоть раз не прогнался RCC с этим конфигом.
 2. **Стабильные `web_port` на плейс.** RCC подключается к уже работающему вебсерверу по
    порту — значит порт плейса не должен плавать между запусками (сейчас наружный код
    берёт свободный порт на каждый старт). Вариант: фиксить в `GameConfig.toml` или
-   выделитель портов в rbxdserver с сохранением в `info.json`.
+   выделитель портов в rbxdserver с сохранением в `info.json`. (rbxdserver v2 выбрал
+   компромисс: CDN-веб — фиксированный порт, веб сессии — эфемерный на сессию,
+   т.к. живёт ровно сессию + кулдаун.)
 3. **Перечитка `GameConfig.toml` без рестарта.** `get_cached_config` и `read_file_data`
    под `functools.cache` — 24/7 вебсервер не увидит изменений конфига. Wishlist:
    эндпойнт `/rfd/reload` или mtime-проверка.
@@ -402,3 +428,33 @@ rbxdclient превращается в тонкий heartbeat для случа�
 и бинарников — он может жить даже на машине без Wine вообще (например, фронт в контейнере),
 если `AssetCache` уже warm. Это, кстати, делает ассеты/аватар/маркетплейс доступными 24/7
 без единого виндового процесса. А вот `--skip_web` (RCC-only) — наоборот, требует Wine.
+
+## 12. Сертификат вебсервера и Studio под Wine
+
+**Симптом (v463 Studio, Linux): без доверенного корня студия не грузит НИКАКИЕ
+ассеты** — даже материалы. Клиент-плейер и RCC проверку сертификатов отключают,
+а студийный wininet/schannel — нет.
+
+С реврайта 2026-09 сертификат **стабильный**: первый запуск вебсервера генерит
+CA + серверный сертификат (`trustme`, SAN `localhost`) и кладёт их в
+`<rbxd>/data/ssl/` (`ca.pem`, `server.pem`, `server.key`); дальше все запуски
+переиспользуют их. CA вшивается в wine-префикс **один раз**:
+
+```sh
+# 1) хоть раз поднять любой вебсервер rbxd (сгенерит data/ssl/)
+# 2) закрыть все wine/umu процессы (живой wineserver перезапишет user.reg)
+# 3) вшить (идемпотентно; --prefix необязателен, есть авто-поиск umu/~/.wine)
+python3 <rbxd>/scripts/install_ca_to_wineprefix.py \
+  [--prefix ~/Games/umu/umu-default/pfx] [--ca /custom/ca.pem]
+```
+
+Механика: в `user.reg` префикса появляется
+`[Software\Microsoft\SystemCertificates\Root\Certificates\RobloxLocalCA]` с
+DER-блобом CA (формат wine cert store: 12-байтный заголовок + DER).
+Повторные запуски скрипта заменяют запись, не плодя дубли.
+
+- Откатить поведение «свежий сертификат на каждый запуск»: `RFD_EPHEMERAL_SSL=1`.
+- Смена сертификата руками: удалить `<rbxd>/data/ssl/` и перезапустить вебсервер,
+  затем повторить вшивание.
+- `Source/ssl/` — старые статические файлы, кодом не используются (остались как
+  ручной бэкап ранних экспериментов).
