@@ -154,7 +154,7 @@ rcc_port_gen, game_configs)` — на каждый плейс поднимает
 - Вебсервер всегда HTTPS; клиенты доверяют любому сертификату (`get_none_ssl`,
   `ssl._create_unverified_context`). Исключение — Studio под Wine: её schannel
   валидирует цепочку, поэтому CA из `<data>/ssl/ca.pem` вшивается в префикс
-  (`scripts/install_ca_to_wineprefix.py`, детали — INTEGRATION.md §12).
+  (`Scripts/install_ca_to_wineprefix.py`, детали — INTEGRATION.md §12).
   Сертификат **стабильный**: кеш `<data>/ssl/` (`ca.pem`/`server.pem`/`server.key`),
   `RFD_EPHEMERAL_SSL=1` возвращает per-run генерацию.
 - `is_privileged` = loopback-адрес пира; `/rfd/data-transfer` работает только с локального RCC.
@@ -197,7 +197,7 @@ Source/vendored/                    — tqdm + sqlite_worker (встроены �
 Source/tester/test_*.py             — тесты (pytest-стиль): asset, logger, serialise, server
 Source/ssl/                       — старые статические сертификаты, КОДОМ НЕ ИСПОЛЬЗУЮТСЯ
                                     (рабочий кеш — <rbxd>/data/ssl/, см. gotchas; это ручной бэкап)
-scripts/install_ca_to_wineprefix.py — CA вебсервера → реестр wine-префикса (Studio v463)
+Scripts/install_ca_to_wineprefix.py — CA вебсервера → реестр wine-префикса (Studio v463)
 Source/Roblox/v347/, v463/          — ~1 ГБ БИНАРНИКОВ, В .gitignore (см. pretasks/download.py)
 ```
 

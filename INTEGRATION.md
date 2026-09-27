@@ -444,7 +444,7 @@ CA + серверный сертификат (`trustme`, SAN `localhost`) и к�
 # 1) хоть раз поднять любой вебсервер rbxd (сгенерит data/ssl/)
 # 2) закрыть все wine/umu процессы (живой wineserver перезапишет user.reg)
 # 3) вшить (идемпотентно; --prefix необязателен, есть авто-поиск umu/~/.wine)
-python3 <rbxd>/scripts/install_ca_to_wineprefix.py \
+python3 <rbxd>/Scripts/install_ca_to_wineprefix.py \
   [--prefix ~/Games/umu/umu-default/pfx] [--ca /custom/ca.pem]
 ```
 
